@@ -19,11 +19,13 @@ module Language.PureScript.Publish
   , getModules
   ) where
 
+import Prelude (error)
 import Protolude hiding (stdin)
 
 import Control.Arrow ((***))
 import Control.Category ((>>>))
 import Control.Monad.Writer.Strict (MonadWriter, WriterT, runWriterT, tell)
+import Control.Monad.Fail (MonadFail(fail))
 
 import Data.Aeson.BetterErrors (Parse, parse, keyMay, eachInObjectWithKey, eachInObject, key, keyOrDefault, asBool, asString, withString, asText, withText)
 import qualified Data.ByteString.Lazy as BL
@@ -49,6 +51,10 @@ import Language.PureScript.Publish.ErrorsWarnings
 import Language.PureScript.Publish.Utils
 import qualified Language.PureScript as P (version, ModuleName)
 import qualified Language.PureScript.Docs as D
+
+-- | Horrible hack
+instance MonadFail Identity where
+  fail = error
 
 data PublishOptions = PublishOptions
   { -- | How to obtain the version tag and version that the data being

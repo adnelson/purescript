@@ -30,6 +30,7 @@ import Protolude (ordNub)
 import Control.Arrow (first, second, (***))
 import Control.Monad
 import Control.Monad.Error.Class (MonadError(..))
+import Control.Monad.Fail (MonadFail)
 import Control.Monad.State.Class (MonadState(..), gets)
 import Control.Monad.Supply.Class (MonadSupply)
 import Control.Monad.Writer.Class (MonadWriter(..))
@@ -71,7 +72,7 @@ data BindingGroupType
 -- | Infer the types of multiple mutually-recursive values, and return elaborated values including
 -- type class dictionaries and type annotations.
 typesOf
-  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadFail m, MonadWriter MultipleErrors m)
   => BindingGroupType
   -> ModuleName
   -> [((SourceAnn, Ident), Expr)]
@@ -228,7 +229,7 @@ typeDictionaryForBindingGroup moduleName vals = do
 
 -- | Check the type annotation of a typed value in a binding group.
 checkTypedBindingGroupElement
-  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadFail m, MonadWriter MultipleErrors m)
   => ModuleName
   -> ((SourceAnn, Ident), (Expr, SourceType, Bool))
   -- ^ The identifier we are trying to define, along with the expression and its type annotation
@@ -250,7 +251,7 @@ checkTypedBindingGroupElement mn (ident, (val, ty, checkType)) dict = do
 
 -- | Infer a type for a value in a binding group which lacks an annotation.
 typeForBindingGroupElement
-  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadFail m, MonadWriter MultipleErrors m)
   => ((SourceAnn, Ident), (Expr, SourceType))
   -- ^ The identifier we are trying to define, along with the expression and its assigned type
   -- (at this point, this should be a unification variable)
@@ -266,7 +267,7 @@ typeForBindingGroupElement (ident, (val, ty)) dict = do
 
 -- | Check the kind of a type, failing if it is not of kind *.
 checkTypeKind
-  :: MonadError MultipleErrors m
+  :: (MonadError MultipleErrors m, MonadFail m)
   => SourceType
   -> SourceKind
   -> m ()
@@ -278,7 +279,7 @@ checkTypeKind ty kind = guardWith (errorMessage (ExpectedType ty kind)) $ isKind
 -- This is necessary during type checking to avoid unifying a polymorphic type with a
 -- unification variable.
 instantiatePolyTypeWithUnknowns
-  :: (MonadState CheckState m, MonadError MultipleErrors m)
+  :: (MonadState CheckState m, MonadError MultipleErrors m, MonadFail m)
   => Expr
   -> SourceType
   -> m (Expr, SourceType)
@@ -293,7 +294,7 @@ instantiatePolyTypeWithUnknowns val ty = return (val, ty)
 
 -- | Infer a type for a value, rethrowing any error to provide a more useful error message
 infer
-  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadFail m, MonadWriter MultipleErrors m)
   => Expr
   -> m Expr
 infer val = withErrorMessageHint (ErrorInferringType val) $ infer' val
@@ -301,7 +302,7 @@ infer val = withErrorMessageHint (ErrorInferringType val) $ infer' val
 -- | Infer a type for a value
 infer'
   :: forall m
-   . (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+   . (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadFail m, MonadWriter MultipleErrors m)
   => Expr
   -> m Expr
 infer' v@(Literal _ (NumericLiteral (Left _))) = return $ TypedValue True v tyInt
@@ -423,7 +424,7 @@ infer' (PositionedValue pos c val) = warnAndRethrowWithPositionTC pos $ do
 infer' v = internalError $ "Invalid argument to infer: " ++ show v
 
 inferLetBinding
-  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadFail m, MonadWriter MultipleErrors m)
   => [Declaration]
   -> [Declaration]
   -> Expr
@@ -462,7 +463,7 @@ inferLetBinding _ _ _ _ = internalError "Invalid argument to inferLetBinding"
 -- | Infer the types of variables brought into scope by a binder
 inferBinder
   :: forall m
-   . (MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+   . (MonadState CheckState m, MonadError MultipleErrors m, MonadFail m, MonadWriter MultipleErrors m)
   => SourceType
   -> Binder
   -> m (M.Map Ident SourceType)
@@ -542,7 +543,7 @@ binderRequiresMonotype _ = True
 
 -- | Instantiate polytypes only when necessitated by a binder.
 instantiateForBinders
-  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadFail m, MonadWriter MultipleErrors m)
   => [Expr]
   -> [CaseAlternative]
   -> m ([Expr], [SourceType])
@@ -559,7 +560,7 @@ instantiateForBinders vals cas = unzip <$> zipWithM (\val inst -> do
 -- Check the types of the return values in a set of binders in a case statement
 --
 checkBinders
-  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadFail m, MonadWriter MultipleErrors m)
   => [SourceType]
   -> SourceType
   -> [CaseAlternative]
@@ -575,7 +576,7 @@ checkBinders nvals ret (CaseAlternative binders result : bs) = do
   return $ r : rs
 
 checkGuardedRhs
-  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadFail m, MonadWriter MultipleErrors m)
   => GuardedExpr
   -> SourceType
   -> m GuardedExpr
@@ -599,7 +600,7 @@ checkGuardedRhs (GuardedExpr (PatternGuard binder expr : guards) rhs) ret = do
 -- Check the type of a value, rethrowing errors to provide a better error message
 --
 check
-  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadFail m, MonadWriter MultipleErrors m)
   => Expr
   -> SourceType
   -> m Expr
@@ -610,7 +611,7 @@ check val ty = withErrorMessageHint (ErrorCheckingType val ty) $ check' val ty
 --
 check'
   :: forall m
-   . (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+   . (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadFail m, MonadWriter MultipleErrors m)
   => Expr
   -> SourceType
   -> m Expr
@@ -748,7 +749,7 @@ check' val ty = do
 -- The @lax@ parameter controls whether or not every record member has to be provided. For object updates, this is not the case.
 --
 checkProperties
-  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadFail m, MonadWriter MultipleErrors m)
   => Expr
   -> [(PSString, Expr)]
   -> SourceType
@@ -793,7 +794,7 @@ checkProperties expr ps row lax = let (ts, r') = rowToList row in go ps (toRowPa
 -- * The elaborated expression for the function application (since we might need to
 --   insert type class dictionaries, etc.)
 checkFunctionApplication
-  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadFail m, MonadWriter MultipleErrors m)
   => Expr
   -- ^ The function expression
   -> SourceType
@@ -808,7 +809,7 @@ checkFunctionApplication fn fnTy arg = withErrorMessageHint (ErrorInApplication 
 
 -- | Check the type of a function application
 checkFunctionApplication'
-  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+  :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadFail m, MonadWriter MultipleErrors m)
   => Expr
   -> SourceType
   -> Expr
@@ -841,7 +842,7 @@ checkFunctionApplication' fn u arg = do
 -- |
 -- Ensure a set of property names and value does not contain duplicate labels
 --
-ensureNoDuplicateProperties :: (MonadError MultipleErrors m) => [(PSString, Expr)] -> m ()
+ensureNoDuplicateProperties :: (MonadError MultipleErrors m, MonadFail m) => [(PSString, Expr)] -> m ()
 ensureNoDuplicateProperties ps =
   let ls = map fst ps in
   case ls \\ ordNub ls of

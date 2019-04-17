@@ -20,6 +20,8 @@ import qualified Data.Set as S
 import           Data.Text (Text)
 import qualified Data.Text as T
 
+import           Control.Monad.Fail
+import           Control.Monad.Identity
 import           Control.Monad.IO.Class (MonadIO, liftIO)
 import           Control.Monad.State.Class
 import           Control.Monad.Reader.Class
@@ -42,6 +44,10 @@ import           Language.PureScript.Interactive.Types        as Interactive
 import           System.Directory (getCurrentDirectory)
 import           System.FilePath ((</>))
 import           System.FilePath.Glob (glob)
+
+-- | Horrible hack
+instance MonadFail Identity where
+  fail = error
 
 -- | Pretty-print errors
 printErrors :: MonadIO m => P.MultipleErrors -> m ()

@@ -13,15 +13,15 @@ module Language.PureScript.CoreImp.Optimizer.Inliner
 
 import Prelude.Compat
 
-import Control.Monad.Supply.Class (MonadSupply, freshName)
+import Control.Monad.Supply.Class (MonadSupply)
 
 import Data.Maybe (fromMaybe)
 import Data.String (IsString, fromString)
-import Data.Text (Text)
 import qualified Data.Text as T
 
 import Language.PureScript.PSString (PSString)
 import Language.PureScript.CoreImp.AST
+import Language.PureScript.CodeGen.JS.Common (JsIdent, jsIdentToText, freshJsIdent)
 import Language.PureScript.CoreImp.Optimizer.Common
 import Language.PureScript.AST (SourceSpan(..))
 import qualified Language.PureScript.Constants as C
@@ -170,22 +170,22 @@ inlineCommonOperators = everywhereTopDown $ applyAll $
   [ fn | i <- [0..10], fn <- [ mkEffFn C.controlMonadEffUncurried C.mkEffFn i, runEffFn C.controlMonadEffUncurried C.runEffFn i ] ] ++
   [ fn | i <- [0..10], fn <- [ mkEffFn C.effectUncurried C.mkEffectFn i, runEffFn C.effectUncurried C.runEffectFn i ] ]
   where
-  binary :: (Text, PSString) -> (Text, PSString) -> BinaryOperator -> AST -> AST
+  binary :: (JsIdent, PSString) -> (JsIdent, PSString) -> BinaryOperator -> AST -> AST
   binary dict fns op = convert where
     convert :: AST -> AST
     convert (App ss (App _ (App _ fn [dict']) [x]) [y]) | isDict dict dict' && isDict fns fn = Binary ss op x y
     convert other = other
-  binary' :: Text -> PSString -> BinaryOperator -> AST -> AST
+  binary' :: JsIdent -> PSString -> BinaryOperator -> AST -> AST
   binary' moduleName opString op = convert where
     convert :: AST -> AST
     convert (App ss (App _ fn [x]) [y]) | isDict (moduleName, opString) fn = Binary ss op x y
     convert other = other
-  unary :: (Text, PSString) -> (Text, PSString) -> UnaryOperator -> AST -> AST
+  unary :: (JsIdent, PSString) -> (JsIdent, PSString) -> UnaryOperator -> AST -> AST
   unary dicts fns op = convert where
     convert :: AST -> AST
     convert (App ss (App _ fn [dict']) [x]) | isDict dicts dict' && isDict fns fn = Unary ss op x
     convert other = other
-  unary' :: Text -> PSString -> UnaryOperator -> AST -> AST
+  unary' :: JsIdent -> PSString -> UnaryOperator -> AST -> AST
   unary' moduleName fnName op = convert where
     convert :: AST -> AST
     convert (App ss fn [x]) | isDict (moduleName, fnName) fn = Unary ss op x
@@ -195,11 +195,11 @@ inlineCommonOperators = everywhereTopDown $ applyAll $
   mkFn = mkFn' C.dataFunctionUncurried C.mkFn $ \ss1 ss2 ss3 args js ->
     Function ss1 Nothing args (Block ss2 [Return ss3 js])
 
-  mkEffFn :: Text -> Text -> Int -> AST -> AST
+  mkEffFn :: JsIdent -> JsIdent -> Int -> AST -> AST
   mkEffFn modName fnName = mkFn' modName fnName $ \ss1 ss2 ss3 args js ->
     Function ss1 Nothing args (Block ss2 [Return ss3 (App ss3 js [])])
 
-  mkFn' :: Text -> Text -> (Maybe SourceSpan -> Maybe SourceSpan -> Maybe SourceSpan -> [Text] -> AST -> AST) -> Int -> AST -> AST
+  mkFn' :: JsIdent -> JsIdent -> (Maybe SourceSpan -> Maybe SourceSpan -> Maybe SourceSpan -> [JsIdent] -> AST -> AST) -> Int -> AST -> AST
   mkFn' modName fnName res 0 = convert where
     convert :: AST -> AST
     convert (App _ mkFnN [Function s1 Nothing [_] (Block s2 [Return s3 js])]) | isNFn modName fnName 0 mkFnN =
@@ -212,24 +212,24 @@ inlineCommonOperators = everywhereTopDown $ applyAll $
         Just (args, [Return ss' ret]) -> res ss ss ss' args ret
         _ -> orig
     convert other = other
-    collectArgs :: Int -> [Text] -> AST -> Maybe ([Text], [AST])
+    collectArgs :: Int -> [JsIdent] -> AST -> Maybe ([JsIdent], [AST])
     collectArgs 1 acc (Function _ Nothing [oneArg] (Block _ js)) | length acc == n - 1 = Just (reverse (oneArg : acc), js)
     collectArgs m acc (Function _ Nothing [oneArg] (Block _ [Return _ ret])) = collectArgs (m - 1) (oneArg : acc) ret
     collectArgs _ _   _ = Nothing
 
-  isNFn :: Text -> Text -> Int -> AST -> Bool
+  isNFn :: JsIdent -> JsIdent -> Int -> AST -> Bool
   isNFn expectMod prefix n (Indexer _ (StringLiteral _ name) (Var _ modName)) | modName == expectMod =
-    name == fromString (T.unpack prefix <> show n)
+    name == fromString (T.unpack (jsIdentToText prefix) <> show n)
   isNFn _ _ _ _ = False
 
   runFn :: Int -> AST -> AST
   runFn = runFn' C.dataFunctionUncurried C.runFn App
 
-  runEffFn :: Text -> Text -> Int -> AST -> AST
+  runEffFn :: JsIdent -> JsIdent -> Int -> AST -> AST
   runEffFn modName fnName = runFn' modName fnName $ \ss fn acc ->
     Function ss Nothing [] (Block ss [Return ss (App ss fn acc)])
 
-  runFn' :: Text -> Text -> (Maybe SourceSpan -> AST -> [AST] -> AST) -> Int -> AST -> AST
+  runFn' :: JsIdent -> JsIdent -> (Maybe SourceSpan -> AST -> [AST] -> AST) -> Int -> AST -> AST
   runFn' modName runFnName res n = convert where
     convert :: AST -> AST
     convert js = fromMaybe js $ go n [] js
@@ -246,12 +246,12 @@ inlineCommonOperators = everywhereTopDown $ applyAll $
     convert (App _ (App _ op' [x]) [y]) | p op' = f x y
     convert other = other
 
-  isModFn :: (Text, PSString) -> AST -> Bool
+  isModFn :: (JsIdent, PSString) -> AST -> Bool
   isModFn (m, op) (Indexer _ (StringLiteral _ op') (Var _ m')) =
     m == m' && op == op'
   isModFn _ _ = False
 
-  isModFnWithDict :: (Text, PSString) -> AST -> Bool
+  isModFnWithDict :: (JsIdent, PSString) -> AST -> Bool
   isModFnWithDict (m, op) (App _ (Indexer _ (StringLiteral _ op') (Var _ m')) [Var _ _]) =
     m == m' && op == op'
   isModFnWithDict _ _ = False
@@ -266,10 +266,10 @@ inlineFnComposition = everywhereTopDownM convert where
     | isFnComposeFlipped dict' fn = return $ App s2 y [App s1 x [z]]
   convert (App ss (App _ (App _ fn [dict']) [x]) [y])
     | isFnCompose dict' fn = do
-        arg <- freshName
+        arg <- freshJsIdent
         return $ Function ss Nothing [arg] (Block ss [Return Nothing $ App Nothing x [App Nothing y [Var Nothing arg]]])
     | isFnComposeFlipped dict' fn = do
-        arg <- freshName
+        arg <- freshJsIdent
         return $ Function ss Nothing [arg] (Block ss [Return Nothing $ App Nothing y [App Nothing x [Var Nothing arg]]])
   convert other = return other
   isFnCompose :: AST -> AST -> Bool

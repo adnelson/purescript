@@ -3,12 +3,12 @@ module Language.PureScript.CoreImp.AST where
 
 import Prelude.Compat
 
-import Control.Monad ((>=>))
+import Control.Monad((>=>))
 import Control.Monad.Identity (Identity(..), runIdentity)
-import Data.Text (Text)
 
 import Language.PureScript.AST (SourceSpan(..))
 import Language.PureScript.Comments
+import Language.PureScript.CodeGen.JS.Common as Common
 import Language.PureScript.PSString (PSString)
 import Language.PureScript.Traversals
 
@@ -62,23 +62,23 @@ data AST
   -- ^ An array indexer expression
   | ObjectLiteral (Maybe SourceSpan) [(PSString, AST)]
   -- ^ An object literal
-  | Function (Maybe SourceSpan) (Maybe Text) [Text] AST
+  | Function (Maybe SourceSpan) (Maybe JsIdent) [JsIdent] AST
   -- ^ A function introduction (optional name, arguments, body)
   | App (Maybe SourceSpan) AST [AST]
   -- ^ Function application
-  | Var (Maybe SourceSpan) Text
+  | Var (Maybe SourceSpan) JsIdent
   -- ^ Variable
   | Block (Maybe SourceSpan) [AST]
   -- ^ A block of expressions in braces
-  | VariableIntroduction (Maybe SourceSpan) Text (Maybe AST)
+  | VariableIntroduction (Maybe SourceSpan) JsIdent (Maybe AST)
   -- ^ A variable introduction and optional initialization
   | Assignment (Maybe SourceSpan) AST AST
   -- ^ A variable assignment
   | While (Maybe SourceSpan) AST AST
   -- ^ While loop
-  | For (Maybe SourceSpan) Text AST AST AST
+  | For (Maybe SourceSpan) JsIdent AST AST AST
   -- ^ For loop
-  | ForIn (Maybe SourceSpan) Text AST AST
+  | ForIn (Maybe SourceSpan) JsIdent AST AST
   -- ^ ForIn loop
   | IfElse (Maybe SourceSpan) AST AST (Maybe AST)
   -- ^ If-then-else statement

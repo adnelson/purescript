@@ -15,6 +15,7 @@ import Protolude (ordNub)
 import Control.Arrow (second)
 import Control.Monad (when, unless, void, forM)
 import Control.Monad.Error.Class (MonadError(..))
+import Control.Monad.Fail (MonadFail)
 import Control.Monad.State.Class (MonadState(..), modify, gets)
 import Control.Monad.Supply.Class (MonadSupply)
 import Control.Monad.Writer.Class (MonadWriter(..), censor)
@@ -45,7 +46,7 @@ import Language.PureScript.Types
 import Lens.Micro.Platform ((^..), _2, _3)
 
 addDataType
-  :: (MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+  :: (MonadState CheckState m, MonadError MultipleErrors m, MonadFail m, MonadWriter MultipleErrors m)
   => ModuleName
   -> DataDeclType
   -> ProperName 'TypeName
@@ -61,7 +62,7 @@ addDataType moduleName dtype name args dctors ctorKind = do
       addDataConstructor moduleName dtype name (map fst args) dctor fields
 
 addDataConstructor
-  :: (MonadState CheckState m, MonadError MultipleErrors m)
+  :: (MonadState CheckState m, MonadError MultipleErrors m, MonadFail m)
   => ModuleName
   -> DataDeclType
   -> ProperName 'TypeName
@@ -79,7 +80,7 @@ addDataConstructor moduleName dtype name args dctor dctorArgs = do
   putEnv $ env { dataConstructors = M.insert (Qualified (Just moduleName) dctor) (dtype, name, polyType, fields) (dataConstructors env) }
 
 addTypeSynonym
-  :: (MonadState CheckState m, MonadError MultipleErrors m)
+  :: (MonadState CheckState m, MonadError MultipleErrors m, MonadFail m)
   => ModuleName
   -> ProperName 'TypeName
   -> [(Text, Maybe SourceKind)]
@@ -93,7 +94,7 @@ addTypeSynonym moduleName name args ty kind = do
                , typeSynonyms = M.insert (Qualified (Just moduleName) name) (args, ty) (typeSynonyms env) }
 
 valueIsNotDefined
-  :: (MonadState CheckState m, MonadError MultipleErrors m)
+  :: (MonadState CheckState m, MonadError MultipleErrors m, MonadFail m)
   => ModuleName
   -> Ident
   -> m ()
@@ -116,7 +117,7 @@ addValue moduleName name ty nameKind = do
 
 addTypeClass
   :: forall m
-   . (MonadState CheckState m, MonadError MultipleErrors m)
+   . (MonadState CheckState m, MonadError MultipleErrors m, MonadFail m)
   => Qualified (ProperName 'ClassName)
   -> [(Text, Maybe SourceKind)]
   -> [SourceConstraint]
@@ -168,7 +169,7 @@ addTypeClassDictionaries mn entries =
   where insertState st = M.insertWith (M.unionWith (M.unionWith (<>))) mn entries (typeClassDictionaries . checkEnv $ st)
 
 checkDuplicateTypeArguments
-  :: (MonadState CheckState m, MonadError MultipleErrors m)
+  :: (MonadState CheckState m, MonadError MultipleErrors m, MonadFail m)
   => [Text]
   -> m ()
 checkDuplicateTypeArguments args = for_ firstDup $ \dup ->
@@ -178,7 +179,7 @@ checkDuplicateTypeArguments args = for_ firstDup $ \dup ->
   firstDup = listToMaybe $ args \\ ordNub args
 
 checkTypeClassInstance
-  :: (MonadState CheckState m, MonadError MultipleErrors m)
+  :: (MonadState CheckState m, MonadError MultipleErrors m, MonadFail m)
   => TypeClassData
   -> Int -- ^ index of type class argument
   -> SourceType
@@ -205,7 +206,7 @@ checkTypeClassInstance cls i = check where
 -- Check that type synonyms are fully-applied in a type
 --
 checkTypeSynonyms
-  :: (MonadState CheckState m, MonadError MultipleErrors m)
+  :: (MonadState CheckState m, MonadError MultipleErrors m, MonadFail m)
   => SourceType
   -> m ()
 checkTypeSynonyms = void . replaceAllTypeSynonyms
@@ -225,7 +226,7 @@ checkTypeSynonyms = void . replaceAllTypeSynonyms
 --
 typeCheckAll
   :: forall m
-   . (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+   . (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadFail m, MonadWriter MultipleErrors m)
   => ModuleName
   -> [DeclarationRef]
   -> [Declaration]
@@ -493,7 +494,7 @@ typeCheckAll moduleName _ = traverse go
 
 checkNewtype
   :: forall m
-   . MonadError MultipleErrors m
+   . (MonadError MultipleErrors m, MonadFail m)
   => ProperName 'TypeName
   -> [(ProperName 'ConstructorName, [(Ident, SourceType)])]
   -> m ()
@@ -506,7 +507,7 @@ checkNewtype name _ = throwError . errorMessage $ InvalidNewtype name
 --
 typeCheckModule
   :: forall m
-   . (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+   . (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadFail m, MonadWriter MultipleErrors m)
   => Module
   -> m Module
 typeCheckModule (Module _ _ _ _ Nothing) =

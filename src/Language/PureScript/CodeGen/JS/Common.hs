@@ -1,48 +1,107 @@
 -- | Common code generation utility functions
-module Language.PureScript.CodeGen.JS.Common where
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+module Language.PureScript.CodeGen.JS.Common (
+  JsIdent,
+  jsIdentToText,
+  jsIdentToPSString,
+  freshJsIdent,
+  moduleNameToJs,
+  properToJs,
+  identToJs,
+  runIdentToJs,
+  isValidJsIdentifier,
+  unsafeMap,
+  jsIdentFromText,
+  rawIdentToJsIdent,
+  ) where
 
 import Prelude.Compat
 
 import Data.Char
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.String (IsString)
 
 import Language.PureScript.Crash
 import Language.PureScript.Names
+import Language.PureScript.CodeGen.JS.ReservedWords
+import Control.Monad.Supply.Class (MonadSupply, freshName)
+import Language.PureScript.PSString as PSString
 
-moduleNameToJs :: ModuleName -> Text
-moduleNameToJs (ModuleName pns) =
-  let name = T.intercalate "_" (runProperName `map` pns)
-  in if nameIsJsBuiltIn name then "$$" <> name else name
+-- | Abstract, representing a valid javascript identifier.
 
--- | Convert an 'Ident' into a valid JavaScript identifier:
+-- Can be constructed via 'properToJs' or 'identToJs'.
+newtype JsIdent = JsIdent Text deriving (Show, Eq, Ord, IsString)
+
+-- | Get the text out of the identifier.
+jsIdentToText :: JsIdent -> Text
+jsIdentToText (JsIdent txt) = txt
+
+-- | Safely construct a JS identifier.
+jsIdentFromText :: Text -> Maybe JsIdent
+jsIdentFromText name
+  | nameIsJsReserved name = Just $ JsIdent $ "$$" <> name
+  | not (isValidJsIdentifier name) = Nothing
+  | otherwise = Just $ JsIdent name
+
+-- | Create a new unique identifier in the Supply monad.
+freshJsIdent :: MonadSupply m => m JsIdent
+freshJsIdent = rawIdentToJsIdent <$> freshName
+
+-- | Modify the text content. Obviously this should be used with caution.
+unsafeMap :: (Text -> Text) -> JsIdent -> JsIdent
+unsafeMap f (JsIdent txt) = JsIdent (f txt)
+
+-- | Convert an identifier to a PureScript string.
+jsIdentToPSString :: JsIdent -> PSString
+jsIdentToPSString = PSString.mkString . jsIdentToText
+
+-- | Construct a JavaScript identifier from characters to be found in
+-- | a PureScript identifier.
 --
 --  * Alphanumeric characters are kept unmodified.
 --
 --  * Reserved javascript identifiers are prefixed with '$$'.
-identToJs :: Ident -> Text
-identToJs (Ident name) = anyNameToJs name
-identToJs (GenIdent _ _) = internalError "GenIdent in identToJs"
-identToJs UnusedIdent = "$__unused"
+--
+-- Note that this function assumes that the argument is a valid PureScript
+-- identifier (either an 'Ident' or a 'ProperName') to begin with; as such it
+-- will not produce valid JavaScript identifiers if the argument e.g. begins
+-- with a digit. For this reason it's not exported in favor of
+-- 'identToJs' or 'properToJs' below.
+rawIdentToJsIdent :: Text -> JsIdent
+rawIdentToJsIdent name = do
+  let converted = T.concatMap identCharToText name
+  case jsIdentFromText converted of
+    Just ident -> ident
+    _ -> internalError $
+      "Converted purescript identifier " ++ show name ++
+      " to " ++ show converted ++ ", which is not a valid JS identifier"
+
+-- | Convert a purescript module name to an identifier.
+moduleNameToJs :: ModuleName -> JsIdent
+moduleNameToJs (ModuleName pns) = rawIdentToJsIdent name
+  where name = T.intercalate "_" (runProperName `map` pns)
+
+
+-- | Convert an 'Ident' into a valid JavaScript identifier. This will
+-- fail if it does not have the 'Ident' constructor, so use with caution.
+identToJs :: Ident -> JsIdent
+identToJs (Ident i) = rawIdentToJsIdent i
+identToJs ident = internalError ("Expected an Ident, but got " ++ show ident)
+
+
+-- | Convert an ident to JS after "running" it -- this should not fail
+runIdentToJs :: Ident -> JsIdent
+runIdentToJs = rawIdentToJsIdent . runIdent
+
 
 -- | Convert a 'ProperName' into a valid JavaScript identifier:
 --
 --  * Alphanumeric characters are kept unmodified.
 --
 --  * Reserved javascript identifiers are prefixed with '$$'.
-properToJs :: ProperName a -> Text
-properToJs = anyNameToJs . runProperName
-
--- | Convert any name into a valid JavaScript identifier.
---
--- Note that this function assumes that the argument is a valid PureScript
--- identifier (either an 'Ident' or a 'ProperName') to begin with; as such it
--- will not produce valid JavaScript identifiers if the argument e.g. begins
--- with a digit. Prefer 'identToJs' or 'properToJs' where possible.
-anyNameToJs :: Text -> Text
-anyNameToJs name
-  | nameIsJsReserved name || nameIsJsBuiltIn name = "$$" <> name
-  | otherwise = T.concatMap identCharToText name
+properToJs :: ProperName a -> JsIdent
+properToJs = rawIdentToJsIdent . runProperName
 
 -- | Test if a string is a valid JavaScript identifier as-is. Note that, while
 -- a return value of 'True' guarantees that the string is a valid JS
@@ -50,14 +109,14 @@ anyNameToJs name
 -- not a valid JS identifier. That is, this check is more conservative than
 -- absolutely necessary.
 isValidJsIdentifier :: Text -> Bool
-isValidJsIdentifier s =
-  and
-    [ not (T.null s)
-    , isAlpha (T.head s)
-    , s == anyNameToJs s
-    ]
+isValidJsIdentifier "" = False
+isValidJsIdentifier ident | nameIsJsReserved ident = False
+isValidJsIdentifier ident = validStart && allValidChars where
+  allValidChars = T.all (\c -> c == '_' || c == '$' || isAlphaNum c) ident
+  validStart = let hd = T.head ident in hd == '_' || hd == '$' || isAlpha hd
 
--- | Attempts to find a human-readable name for a symbol, if none has been specified returns the
+-- | Attempts to find a javascript-compatible replacement for
+-- characters found in symbols. If none has been specified returns the
 -- ordinal value.
 identCharToText :: Char -> Text
 identCharToText c | isAlphaNum c = T.singleton c
@@ -84,163 +143,3 @@ identCharToText '?' = "$qmark"
 identCharToText '@' = "$at"
 identCharToText '\'' = "$prime"
 identCharToText c = '$' `T.cons` T.pack (show (ord c))
-
--- | Checks whether an identifier name is reserved in JavaScript.
-nameIsJsReserved :: Text -> Bool
-nameIsJsReserved name =
-  name `elem` jsAnyReserved
-
--- | Checks whether a name matches a built-in value in JavaScript.
-nameIsJsBuiltIn :: Text -> Bool
-nameIsJsBuiltIn name =
-  name `elem`
-    [ "arguments"
-    , "Array"
-    , "ArrayBuffer"
-    , "Boolean"
-    , "DataView"
-    , "Date"
-    , "decodeURI"
-    , "decodeURIComponent"
-    , "encodeURI"
-    , "encodeURIComponent"
-    , "Error"
-    , "escape"
-    , "eval"
-    , "EvalError"
-    , "Float32Array"
-    , "Float64Array"
-    , "Function"
-    , "Infinity"
-    , "Int16Array"
-    , "Int32Array"
-    , "Int8Array"
-    , "Intl"
-    , "isFinite"
-    , "isNaN"
-    , "JSON"
-    , "Map"
-    , "Math"
-    , "NaN"
-    , "Number"
-    , "Object"
-    , "parseFloat"
-    , "parseInt"
-    , "Promise"
-    , "Proxy"
-    , "RangeError"
-    , "ReferenceError"
-    , "Reflect"
-    , "RegExp"
-    , "Set"
-    , "SIMD"
-    , "String"
-    , "Symbol"
-    , "SyntaxError"
-    , "TypeError"
-    , "Uint16Array"
-    , "Uint32Array"
-    , "Uint8Array"
-    , "Uint8ClampedArray"
-    , "undefined"
-    , "unescape"
-    , "URIError"
-    , "WeakMap"
-    , "WeakSet"
-    ]
-
-jsAnyReserved :: [Text]
-jsAnyReserved =
-  concat
-    [ jsKeywords
-    , jsSometimesReserved
-    , jsFutureReserved
-    , jsFutureReservedStrict
-    , jsOldReserved
-    , jsLiterals
-    ]
-
-jsKeywords :: [Text]
-jsKeywords =
-  [ "break"
-  , "case"
-  , "catch"
-  , "class"
-  , "const"
-  , "continue"
-  , "debugger"
-  , "default"
-  , "delete"
-  , "do"
-  , "else"
-  , "export"
-  , "extends"
-  , "finally"
-  , "for"
-  , "function"
-  , "if"
-  , "import"
-  , "in"
-  , "instanceof"
-  , "new"
-  , "return"
-  , "super"
-  , "switch"
-  , "this"
-  , "throw"
-  , "try"
-  , "typeof"
-  , "var"
-  , "void"
-  , "while"
-  , "with"
-  ]
-
-jsSometimesReserved :: [Text]
-jsSometimesReserved =
-  [ "await"
-  , "let"
-  , "static"
-  , "yield"
-  ]
-
-jsFutureReserved :: [Text]
-jsFutureReserved =
-  [ "enum" ]
-
-jsFutureReservedStrict :: [Text]
-jsFutureReservedStrict =
-  [ "implements"
-  , "interface"
-  , "package"
-  , "private"
-  , "protected"
-  , "public"
-  ]
-
-jsOldReserved :: [Text]
-jsOldReserved =
-  [ "abstract"
-  , "boolean"
-  , "byte"
-  , "char"
-  , "double"
-  , "final"
-  , "float"
-  , "goto"
-  , "int"
-  , "long"
-  , "native"
-  , "short"
-  , "synchronized"
-  , "throws"
-  , "transient"
-  , "volatile"
-  ]
-
-jsLiterals :: [Text]
-jsLiterals =
-  [ "null"
-  , "true"
-  , "false"
-  ]

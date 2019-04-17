@@ -68,9 +68,9 @@ literals = mkPattern' match'
     , currentIndent
     , return $ emit "}"
     ]
-  match (Var _ ident) = return $ emit ident
+  match (Var _ ident) = return $ emit $ jsIdentToText ident
   match (VariableIntroduction _ ident value) = mconcat <$> sequence
-    [ return $ emit $ "var " <> ident
+    [ return $ emit $ "var " <> jsIdentToText ident
     , maybe (return mempty) (fmap (emit " = " <>) . prettyPrintJS') value
     ]
   match (Assignment _ target value) = mconcat <$> sequence
@@ -85,15 +85,15 @@ literals = mkPattern' match'
     , prettyPrintJS' sts
     ]
   match (For _ ident start end sts) = mconcat <$> sequence
-    [ return $ emit $ "for (var " <> ident <> " = "
+    [ return $ emit $ "for (var " <> jsIdentToText ident <> " = "
     , prettyPrintJS' start
-    , return $ emit $ "; " <> ident <> " < "
+    , return $ emit $ "; " <> jsIdentToText ident <> " < "
     , prettyPrintJS' end
-    , return $ emit $ "; " <> ident <> "++) "
+    , return $ emit $ "; " <> jsIdentToText ident <> "++) "
     , prettyPrintJS' sts
     ]
   match (ForIn _ ident obj sts) = mconcat <$> sequence
-    [ return $ emit $ "for (var " <> ident <> " in "
+    [ return $ emit $ "for (var " <> jsIdentToText ident <> " in "
     , prettyPrintJS' obj
     , return $ emit ") "
     , prettyPrintJS' sts
@@ -164,7 +164,7 @@ indexer = mkPattern' match
   match (Indexer _ index val) = (,) <$> prettyPrintJS' index <*> pure val
   match _ = mzero
 
-lam :: Pattern PrinterState AST ((Maybe Text, [Text], Maybe SourceSpan), AST)
+lam :: Pattern PrinterState AST ((Maybe JsIdent, [JsIdent], Maybe SourceSpan), AST)
 lam = mkPattern match
   where
   match (Function ss name args ret) = Just ((name, args, ss), ret)
@@ -240,8 +240,8 @@ prettyPrintJS' = A.runKleisli $ runPattern matchValue
                   , [ unary New "new " ]
                   , [ Wrap lam $ \(name, args, ss) ret -> addMapping' ss <>
                       emit ("function "
-                        <> fromMaybe "" name
-                        <> "(" <> intercalate ", " args <> ") ")
+                        <> fromMaybe "" (jsIdentToText <$> name)
+                        <> "(" <> intercalate ", " (jsIdentToText <$> args) <> ") ")
                         <> ret ]
                   , [ unary     Not                  "!"
                     , unary     BitwiseNot           "~"

@@ -3,7 +3,7 @@ module Language.PureScript.CoreImp.Optimizer.TCO (tco) where
 
 import Prelude.Compat
 
-import Data.Text (Text)
+import Language.PureScript.CodeGen.JS.Common
 import Language.PureScript.CoreImp.AST
 import Language.PureScript.AST.SourcePos (SourceSpan)
 import Safe (headDef, tailSafe)
@@ -11,19 +11,19 @@ import Safe (headDef, tailSafe)
 -- | Eliminate tail calls
 tco :: AST -> AST
 tco = everywhere convert where
-  tcoVar :: Text -> Text
-  tcoVar arg = "$tco_var_" <> arg
+  tcoVar :: JsIdent -> JsIdent
+  tcoVar arg = unsafeMap ("$tco_var_" <>) arg
 
-  copyVar :: Text -> Text
-  copyVar arg = "$copy_" <> arg
+  copyVar :: JsIdent -> JsIdent
+  copyVar arg = unsafeMap ("$copy_" <>) arg
 
-  tcoDone :: Text
+  tcoDone :: JsIdent
   tcoDone = "$tco_done"
 
-  tcoLoop :: Text
+  tcoLoop :: JsIdent
   tcoLoop = "$tco_loop"
 
-  tcoResult :: Text
+  tcoResult :: JsIdent
   tcoResult = "$tco_result"
 
   convert :: AST -> AST
@@ -36,7 +36,7 @@ tco = everywhere convert where
       (argss, body', replace) = collectAllFunctionArgs [] id fn
   convert js = js
 
-  collectAllFunctionArgs :: [[Text]] -> (AST -> AST) -> AST -> ([[Text]], AST, AST -> AST)
+  collectAllFunctionArgs :: [[JsIdent]] -> (AST -> AST) -> AST -> ([[JsIdent]], AST, AST -> AST)
   collectAllFunctionArgs allArgs f (Function s1 ident args (Block s2 (body@(Return _ _):_))) =
     collectAllFunctionArgs (args : allArgs) (\b -> f (Function s1 ident (map copyVar args) (Block s2 [b]))) body
   collectAllFunctionArgs allArgs f (Function ss ident args body@(Block _ _)) =
@@ -47,7 +47,7 @@ tco = everywhere convert where
     (args : allArgs, body, f . Return s1 . Function s2 ident (map copyVar args))
   collectAllFunctionArgs allArgs f body = (allArgs, body, f)
 
-  isTailRecursive :: Text -> AST -> Bool
+  isTailRecursive :: JsIdent -> AST -> Bool
   isTailRecursive ident js = countSelfReferences js > 0 && allInTailPosition js where
     countSelfReferences = everything (+) match where
       match :: AST -> Int
@@ -80,7 +80,7 @@ tco = everywhere convert where
     allInTailPosition _
       = False
 
-  toLoop :: Text -> [Text] -> [Text] -> AST -> AST
+  toLoop :: JsIdent -> [JsIdent] -> [JsIdent] -> AST -> AST
   toLoop ident outerArgs innerArgs js =
       Block rootSS $
         map (\arg -> VariableIntroduction rootSS (tcoVar arg) (Just (Var rootSS (copyVar arg)))) outerArgs ++
@@ -123,7 +123,7 @@ tco = everywhere convert where
     collectArgs acc (App _ fn args') = collectArgs (args' : acc) fn
     collectArgs acc _ = acc
 
-  isSelfCall :: Text -> AST -> Bool
+  isSelfCall :: JsIdent -> AST -> Bool
   isSelfCall ident (App _ (Var _ ident') _) = ident == ident'
   isSelfCall ident (App _ fn _) = isSelfCall ident fn
   isSelfCall _ _ = False

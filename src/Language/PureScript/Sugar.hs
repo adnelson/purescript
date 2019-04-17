@@ -6,6 +6,7 @@ module Language.PureScript.Sugar (desugar, module S) where
 import Control.Category ((>>>))
 import Control.Monad
 import Control.Monad.Error.Class (MonadError())
+import Control.Monad.Fail (MonadFail)
 import Control.Monad.Supply.Class
 import Control.Monad.Writer.Class (MonadWriter())
 
@@ -53,7 +54,7 @@ import Language.PureScript.Sugar.TypeDeclarations as S
 --  * Group mutually recursive value and data declarations into binding groups.
 --
 desugar
-  :: (MonadSupply m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+  :: (MonadSupply m, MonadError MultipleErrors m, MonadFail m, MonadWriter MultipleErrors m)
   => [ExternsFile]
   -> [Module]
   -> m [Module]

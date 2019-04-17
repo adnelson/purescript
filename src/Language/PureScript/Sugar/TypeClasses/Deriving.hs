@@ -7,6 +7,7 @@ import           Protolude (ordNub)
 import           Control.Arrow (second)
 import           Control.Monad (replicateM, zipWithM, unless, when)
 import           Control.Monad.Error.Class (MonadError(..))
+import           Control.Monad.Fail (MonadFail)
 import           Control.Monad.Writer.Class (MonadWriter(..))
 import           Control.Monad.Supply.Class (MonadSupply)
 import           Data.Foldable (for_)
@@ -67,7 +68,7 @@ extractNewtypeName mn xs = go (last xs) where
 -- | Elaborates deriving instance declarations by code generation.
 deriveInstances
   :: forall m
-   . (MonadError MultipleErrors m, MonadWriter MultipleErrors m, MonadSupply m)
+   . (MonadError MultipleErrors m, MonadFail m, MonadWriter MultipleErrors m, MonadSupply m)
   => [ExternsFile]
   -> Module
   -> m Module
@@ -107,7 +108,7 @@ deriveInstances externs (Module ss coms mn ds exts) =
 -- | Takes a declaration, and if the declaration is a deriving TypeInstanceDeclaration,
 -- elaborates that into an instance declaration via code generation.
 deriveInstance
-  :: (MonadError MultipleErrors m, MonadWriter MultipleErrors m, MonadSupply m)
+  :: (MonadError MultipleErrors m, MonadFail m, MonadWriter MultipleErrors m, MonadSupply m)
   => ModuleName
   -> SynonymMap
   -> NewtypeDerivedInstances
@@ -189,7 +190,7 @@ unwrapTypeConstructor = fmap (second reverse) . go
 
 deriveNewtypeInstance
   :: forall m
-   . (MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+   . (MonadError MultipleErrors m, MonadFail m, MonadWriter MultipleErrors m)
   => SourceSpan
   -> ModuleName
   -> SynonymMap
@@ -277,7 +278,7 @@ unguarded e = [MkUnguarded e]
 
 deriveGenericRep
   :: forall m
-   . (MonadError MultipleErrors m, MonadSupply m)
+   . (MonadError MultipleErrors m, MonadFail m, MonadSupply m)
   => SourceSpan
   -> ModuleName
   -> SynonymMap
@@ -426,14 +427,14 @@ deriveGenericRep ss mn syns ds tyConNm tyConArgs repTy = do
     argument' :: Expr -> Expr
     argument' = App (Constructor ss argument)
 
-checkIsWildcard :: MonadError MultipleErrors m => SourceSpan -> ProperName 'TypeName -> SourceType -> m ()
+checkIsWildcard :: (MonadError MultipleErrors m, MonadFail m) => SourceSpan -> ProperName 'TypeName -> SourceType -> m ()
 checkIsWildcard _ _ (TypeWildcard _ Nothing) = return ()
 checkIsWildcard ss tyConNm _ =
   throwError . errorMessage' ss $ ExpectedWildcard tyConNm
 
 deriveEq
   :: forall m
-   . (MonadError MultipleErrors m, MonadSupply m)
+   . (MonadError MultipleErrors m, MonadFail m, MonadSupply m)
   => SourceSpan
   -> ModuleName
   -> SynonymMap
@@ -501,7 +502,7 @@ deriveEq1 ss =
 
 deriveOrd
   :: forall m
-   . (MonadError MultipleErrors m, MonadSupply m)
+   . (MonadError MultipleErrors m, MonadFail m, MonadSupply m)
   => SourceSpan
   -> ModuleName
   -> SynonymMap
@@ -602,7 +603,7 @@ deriveOrd1 ss =
 
 deriveNewtype
   :: forall m
-   . (MonadError MultipleErrors m, MonadSupply m)
+   . (MonadError MultipleErrors m, MonadFail m, MonadSupply m)
   => SourceSpan
   -> ModuleName
   -> SynonymMap
@@ -639,7 +640,7 @@ deriveNewtype ss mn syns ds tyConNm tyConArgs unwrappedTy = do
     go _ = internalError "deriveNewtype go: expected DataDeclaration"
 
 findTypeDecl
-  :: (MonadError MultipleErrors m)
+  :: (MonadError MultipleErrors m, MonadFail m)
   => SourceSpan
   -> ProperName 'TypeName
   -> [Declaration]
@@ -686,7 +687,7 @@ decomposeRec' = sortBy (comparing fst) . go
 
 deriveFunctor
   :: forall m
-   . (MonadError MultipleErrors m, MonadSupply m)
+   . (MonadError MultipleErrors m, MonadFail m, MonadSupply m)
   => SourceSpan
   -> ModuleName
   -> SynonymMap

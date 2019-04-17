@@ -44,15 +44,15 @@ main = do
   defaultMain $
     testGroup
       "Tests"
-      [ compilerTests
+      [ {-compilerTests
       , psciTests
-      , pscBundleTests
+      , -}pscBundleTests{-
       , ideTests
       , coreFnTests
       , docsTests
       , primDocsTests
       , publishTests
-      , hierarchyTests
+      , hierarchyTests-}
       ]
 
   where

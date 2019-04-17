@@ -6,9 +6,9 @@ import Prelude.Compat
 import Protolude (ordNub)
 
 import Data.Maybe (fromJust, isJust)
-import Data.Text (Text)
 
 import Language.PureScript.CoreImp.AST
+import Language.PureScript.CodeGen.JS.Common
 import Language.PureScript.CoreImp.Optimizer.Common
 import Language.PureScript.PSString (mkString)
 import qualified Language.PureScript.Constants as C
@@ -36,7 +36,7 @@ magicDoEffect = magicDo C.effect C.effectDictionaries
 magicDoST :: AST -> AST
 magicDoST = magicDo C.st C.stDictionaries
 
-magicDo :: Text -> C.EffectDictionaries -> AST -> AST
+magicDo :: JsIdent -> C.EffectDictionaries -> AST -> AST
 magicDo effectModule C.EffectDictionaries{..} = everywhereTopDown convert
   where
   -- The name of the function block which is added to denote a do block
