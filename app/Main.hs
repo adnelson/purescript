@@ -21,12 +21,9 @@ import qualified System.IO as IO
 import qualified Text.PrettyPrint.ANSI.Leijen as Doc
 import           Version (versionString)
 
-
-main :: IO ()
-main = do
-    IO.hSetEncoding IO.stdout IO.utf8
-    IO.hSetEncoding IO.stderr IO.utf8
-    cmd <- Opts.handleParseResult . execParserPure opts =<< getArgs
+mainWithArgs :: [String] -> IO ()
+mainWithArgs args = do
+    cmd <- Opts.handleParseResult $ execParserPure opts args
     cmd
   where
     opts        = Opts.info (versionInfo <*> Opts.helper <*> commands) infoModList
@@ -82,3 +79,9 @@ main = do
             (Opts.info REPL.command
               (Opts.progDesc "Enter the interactive mode (PSCi)"))
         ]
+
+main :: IO ()
+main = do
+    IO.hSetEncoding IO.stdout IO.utf8
+    IO.hSetEncoding IO.stderr IO.utf8
+    mainWithArgs =<< getArgs
