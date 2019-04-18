@@ -278,9 +278,11 @@ typeCheckAll moduleName _ = traverse go
     warnAndRethrow (addHint (ErrorInValueDeclaration name) . addHint (positionedError ss)) . censorLocalUnnamedWildcards val $ do
       val' <- checkExhaustiveExpr ss env moduleName val
       valueIsNotDefined moduleName name
-      [(_, (val'', ty))] <- typesOf NonRecursiveBindingGroup moduleName [((sa, name), val')]
-      addValue moduleName name ty nameKind
-      return $ ValueDecl sa name nameKind [] [MkUnguarded val'']
+      typesOf NonRecursiveBindingGroup moduleName [((sa, name), val')] >>= \case
+        [(_, (Inferred val'' ty))] -> do
+          addValue moduleName name ty nameKind
+          return $ ValueDecl sa name nameKind [] [MkUnguarded val'']
+        _ -> internalError "typesOf did not return a singleton"
     where
   go ValueDeclaration{} = internalError "Binders were not desugared"
   go BoundValueDeclaration{} = internalError "BoundValueDeclaration should be desugared"
@@ -293,7 +295,7 @@ typeCheckAll moduleName _ = traverse go
       tys <- typesOf RecursiveBindingGroup moduleName $ fmap (\(sai, _, ty) -> (sai, ty)) vals'
       vals'' <- forM [ (sai, val, nameKind, ty)
                      | (sai@(_, name), nameKind, _) <- vals'
-                     , ((_, name'), (val, ty)) <- tys
+                     , ((_, name'), (Inferred val ty)) <- tys
                      , name == name'
                      ] $ \(sai@(_, name), val, nameKind, ty) -> do
         addValue moduleName name ty nameKind

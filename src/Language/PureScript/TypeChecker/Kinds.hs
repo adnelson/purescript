@@ -218,7 +218,7 @@ infer'
   -> m (SourceKind, [(Text, SourceKind)])
 infer' (ForAll ann ident ty _) = do
   k1 <- freshKind ann
-  Just moduleName <- checkCurrentModule <$> get
+  moduleName <- unsafeGetCurrentModule
   (k2, args) <- bindLocalTypeVariables moduleName [(ProperName ident, k1)] $ infer ty
   unifyKinds k2 kindType
   return (kindType, (ident, k1) : args)
@@ -231,7 +231,7 @@ infer' other = (, []) <$> go other
   go :: SourceType -> m SourceKind
   go (ForAll ann ident ty _) = do
     k1 <- freshKind ann
-    Just moduleName <- checkCurrentModule <$> get
+    moduleName <- unsafeGetCurrentModule
     k2 <- bindLocalTypeVariables moduleName [(ProperName ident, k1)] $ go ty
     unifyKinds k2 kindType
     return $ kindType $> ann
@@ -243,10 +243,10 @@ infer' other = (, []) <$> go other
   go (TUnknown ann _) = freshKind ann
   go (TypeLevelString ann _) = return $ kindSymbol $> ann
   go (TypeVar ann v) = do
-    Just moduleName <- checkCurrentModule <$> get
+    moduleName <- unsafeGetCurrentModule
     ($> ann) <$> lookupTypeVariable moduleName (Qualified Nothing (ProperName v))
   go (Skolem ann v _ _) = do
-    Just moduleName <- checkCurrentModule <$> get
+    moduleName <- unsafeGetCurrentModule
     ($> ann) <$> lookupTypeVariable moduleName (Qualified Nothing (ProperName v))
   go (TypeConstructor ann v) = do
     env <- getEnv
