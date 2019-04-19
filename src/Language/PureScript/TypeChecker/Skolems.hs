@@ -126,4 +126,4 @@ skolemEscapeCheck expr@TypedValue{} =
           collect (Skolem ss name _ scope) = [(ss, name, scope)]
           collect _ = []
     go scos _ = (scos, [])
-skolemEscapeCheck _ = internalError "skolemEscapeCheck: untyped value"
+skolemEscapeCheck e = internalError $ "skolemEscapeCheck: untyped value " ++ show e

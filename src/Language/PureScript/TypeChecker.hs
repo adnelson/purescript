@@ -279,7 +279,7 @@ typeCheckAll moduleName _ = traverse go
       val' <- checkExhaustiveExpr ss env moduleName val
       valueIsNotDefined moduleName name
       typesOf NonRecursiveBindingGroup moduleName [((sa, name), val')] >>= \case
-        [(_, (Inferred val'' ty))] -> do
+        [(_, (ExprType val'' ty))] -> do
           addValue moduleName name ty nameKind
           return $ ValueDecl sa name nameKind [] [MkUnguarded val'']
         _ -> internalError "typesOf did not return a singleton"
@@ -295,7 +295,7 @@ typeCheckAll moduleName _ = traverse go
       tys <- typesOf RecursiveBindingGroup moduleName $ fmap (\(sai, _, ty) -> (sai, ty)) vals'
       vals'' <- forM [ (sai, val, nameKind, ty)
                      | (sai@(_, name), nameKind, _) <- vals'
-                     , ((_, name'), (Inferred val ty)) <- tys
+                     , ((_, name'), (ExprType val ty)) <- tys
                      , name == name'
                      ] $ \(sai@(_, name), val, nameKind, ty) -> do
         addValue moduleName name ty nameKind
