@@ -27,9 +27,27 @@ import           Language.PureScript.TypeClassDictionaries
 import           Language.PureScript.Types
 import qualified Language.PureScript.Constants as C
 
+-- | Metadata for a value in scope.
+type NameRecord' expr = (SourceType, NameKind, NameVisibility, expr)
+
+nrSourceType :: NameRecord' e -> SourceType
+nrSourceType (t, _, _, _) = t
+
+nrNameKind :: NameRecord' e -> NameKind
+nrNameKind (_, k, _, _) = k
+
+nrVisibility :: NameRecord' e -> NameVisibility
+nrVisibility (_, _, v, _) = v
+
+nrExpr :: NameRecord' e -> e
+nrExpr ( _, _, _, e) = e
+
+nameRecord :: SourceType -> NameKind -> NameVisibility -> NameRecord' ()
+nameRecord st nk nv = (st, nk, nv, ())
+
 -- | The @Environment@ defines all values and types which are currently in scope:
-data Environment = Environment
-  { names :: M.Map (Qualified Ident) (SourceType, NameKind, NameVisibility)
+data Environment' expr = Environment
+  { names :: M.Map (Qualified Ident) (NameRecord' expr)
   -- ^ Values currently in scope
   , types :: M.Map (Qualified (ProperName 'TypeName)) (SourceKind, TypeKind)
   -- ^ Type names currently in scope
@@ -46,9 +64,9 @@ data Environment = Environment
   -- ^ Type classes
   , kinds :: S.Set (Qualified (ProperName 'KindName))
   -- ^ Kinds in scope
-  } deriving (Show, Generic)
+  } deriving (Show, Generic, Functor)
 
-instance NFData Environment
+instance NFData e => NFData (Environment' e)
 
 -- | Information about a type class
 data TypeClassData = TypeClassData
@@ -97,7 +115,7 @@ instance A.ToJSON FunctionalDependency where
              ]
 
 -- | The initial environment with no values and only the default javascript types defined
-initEnvironment :: Environment
+initEnvironment :: Environment' e
 initEnvironment = Environment M.empty allPrimTypes M.empty M.empty M.empty allPrimClasses allPrimKinds
 
 -- | A constructor for TypeClassData that computes which type class arguments are fully determined
@@ -598,16 +616,16 @@ primTypeErrorClasses =
     ]
 
 -- | Finds information about data constructors from the current environment.
-lookupConstructor :: Environment -> Qualified (ProperName 'ConstructorName) -> (DataDeclType, ProperName 'TypeName, SourceType, [Ident])
+lookupConstructor :: Environment' e -> Qualified (ProperName 'ConstructorName) -> (DataDeclType, ProperName 'TypeName, SourceType, [Ident])
 lookupConstructor env ctor =
   fromMaybe (internalError "Data constructor not found") $ ctor `M.lookup` dataConstructors env
 
 -- | Checks whether a data constructor is for a newtype.
-isNewtypeConstructor :: Environment -> Qualified (ProperName 'ConstructorName) -> Bool
+isNewtypeConstructor :: Environment' e -> Qualified (ProperName 'ConstructorName) -> Bool
 isNewtypeConstructor e ctor = case lookupConstructor e ctor of
   (Newtype, _, _, _) -> True
   (Data, _, _, _) -> False
 
 -- | Finds information about values from the current environment.
-lookupValue :: Environment -> Qualified Ident -> Maybe (SourceType, NameKind, NameVisibility)
+lookupValue :: Environment' e -> Qualified Ident -> Maybe (SourceType, NameKind, NameVisibility, e)
 lookupValue env ident = ident `M.lookup` names env

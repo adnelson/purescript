@@ -13,4 +13,5 @@ import Language.PureScript.CoreFn.Expr as C
 import Language.PureScript.CoreFn.Meta as C
 import Language.PureScript.CoreFn.Module as C
 import Language.PureScript.CoreFn.Optimizer as C
+import Language.PureScript.CoreFn.Reduce as C
 import Language.PureScript.CoreFn.Traversals as C

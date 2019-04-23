@@ -112,7 +112,7 @@ addValue
   -> m ()
 addValue moduleName name ty nameKind = do
   env <- getEnv
-  putEnv (env { names = M.insert (Qualified (Just moduleName) name) (ty, nameKind, Defined) (names env) })
+  putEnv (env { names = M.insert (Qualified (Just moduleName) name) (nameRecord ty nameKind Defined) (names env) })
 
 addTypeClass
   :: forall m
@@ -314,7 +314,7 @@ typeCheckAll moduleName _ = traverse go
       guardWith (errorMessage (ExpectedType ty kind)) $ kind == kindType
       case M.lookup (Qualified (Just moduleName) name) (names env) of
         Just _ -> throwError . errorMessage $ RedefinedIdent name
-        Nothing -> putEnv (env { names = M.insert (Qualified (Just moduleName) name) (ty, External, Defined) (names env) })
+        Nothing -> putEnv (env { names = M.insert (Qualified (Just moduleName) name) (nameRecord ty External Defined) (names env) })
     return d
   go d@FixityDeclaration{} = return d
   go d@ImportDeclaration{} = return d

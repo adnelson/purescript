@@ -14,6 +14,8 @@ import qualified Text.PrettyPrint.Boxes as Box
 textT :: Text -> Box.Box
 textT = Box.text . T.unpack
 
+type NameRecord = P.NameRecord' ()
+
 -- Printers
 
 -- |
@@ -37,13 +39,13 @@ printModuleSignatures moduleName P.Environment{..} =
 
   where printModule's showF = Box.vsep 1 Box.left . showF
 
-        findNameType :: M.Map (P.Qualified P.Ident) (P.SourceType, P.NameKind, P.NameVisibility)
+        findNameType :: M.Map (P.Qualified P.Ident) NameRecord
                      -> P.Qualified P.Ident
-                     -> (P.Ident, Maybe (P.SourceType, P.NameKind, P.NameVisibility))
+                     -> (P.Ident, Maybe NameRecord)
         findNameType envNames m = (P.disqualify m, M.lookup m envNames)
 
-        showNameType :: (P.Ident, Maybe (P.SourceType, P.NameKind, P.NameVisibility)) -> Box.Box
-        showNameType (mIdent, Just (mType, _, _)) = textT (P.showIdent mIdent <> " :: ") Box.<> P.typeAsBox maxBound mType
+        showNameType :: (P.Ident, Maybe NameRecord) -> Box.Box
+        showNameType (mIdent, Just (mType, _, _, _)) = textT (P.showIdent mIdent <> " :: ") Box.<> P.typeAsBox maxBound mType
         showNameType _ = P.internalError "The impossible happened in printModuleSignatures."
 
         findTypeClass

@@ -1,9 +1,13 @@
 -- |
 -- The core functional representation for binders
 --
+{-# LANGUAGE DeriveGeneric #-}
 module Language.PureScript.CoreFn.Binders where
 
 import Prelude.Compat
+import qualified Data.Set as S
+import Data.Aeson (ToJSON, FromJSON)
+import GHC.Generics (Generic)
 
 import Language.PureScript.AST.Literals
 import Language.PureScript.Names
@@ -31,7 +35,10 @@ data Binder a
   -- |
   -- A binder which binds its input to an identifier
   --
-  | NamedBinder a Ident (Binder a) deriving (Show, Functor)
+  | NamedBinder a Ident (Binder a) deriving (Show, Functor, Generic)
+
+instance ToJSON a => ToJSON (Binder a)
+instance FromJSON a => FromJSON (Binder a)
 
 
 extractBinderAnn :: Binder a -> a
@@ -40,3 +47,11 @@ extractBinderAnn (LiteralBinder a _) = a
 extractBinderAnn (VarBinder a _) = a
 extractBinderAnn (ConstructorBinder a _ _ _) = a
 extractBinderAnn (NamedBinder a _ _) = a
+
+binderIdents :: Binder a -> S.Set Ident
+binderIdents = \case
+  NullBinder _ -> S.empty
+  LiteralBinder _ _ -> S.empty
+  VarBinder _ ident -> S.singleton ident
+  ConstructorBinder _ _ _ binders -> foldr S.union S.empty $ map binderIdents binders
+  NamedBinder _ ident binder -> S.insert ident (binderIdents binder)

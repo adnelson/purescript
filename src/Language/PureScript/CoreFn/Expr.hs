@@ -1,10 +1,14 @@
 -- |
 -- The core functional representation
 --
+{-# LANGUAGE DeriveGeneric #-}
 module Language.PureScript.CoreFn.Expr where
 
 import Prelude.Compat
+import qualified Data.Set as S
+import Data.Aeson (ToJSON, FromJSON)
 
+import GHC.Generics (Generic)
 import Control.Arrow ((***))
 
 import Language.PureScript.AST.Literals
@@ -52,7 +56,10 @@ data Expr a
   -- A let binding
   --
   | Let a [Bind a] (Expr a)
-  deriving (Show, Functor)
+  deriving (Show, Functor, Generic)
+
+instance ToJSON a => ToJSON (Expr a)
+instance FromJSON a => FromJSON (Expr a)
 
 -- |
 -- A let or module binding.
@@ -65,7 +72,15 @@ data Bind a
   -- |
   -- Mutually recursive binding group for several values
   --
-  | Rec [((a, Ident), Expr a)] deriving (Show, Functor)
+  | Rec [((a, Ident), Expr a)] deriving (Show, Functor, Generic)
+
+instance ToJSON a => ToJSON (Bind a)
+instance FromJSON a => FromJSON (Bind a)
+
+bindIdents :: Bind a -> S.Set Ident
+bindIdents = \case
+  NonRec _ ident _ -> S.singleton ident
+  Rec bindings -> foldr S.union S.empty $ map (\((_, ident), _) -> S.singleton ident) bindings
 
 -- |
 -- A guard is just a boolean-valued expression that appears alongside a set of binders
@@ -84,7 +99,11 @@ data CaseAlternative a = CaseAlternative
     -- The result expression or a collect of guarded expressions
     --
   , caseAlternativeResult :: Either [(Guard a, Expr a)] (Expr a)
-  } deriving (Show)
+  } deriving (Show, Generic)
+
+
+instance ToJSON a => ToJSON (CaseAlternative a)
+instance FromJSON a => FromJSON (CaseAlternative a)
 
 instance Functor CaseAlternative where
 

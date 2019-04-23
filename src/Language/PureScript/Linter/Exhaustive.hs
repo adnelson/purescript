@@ -37,6 +37,8 @@ import Language.PureScript.Traversals
 import Language.PureScript.Types as P
 import qualified Language.PureScript.Constants as C
 
+type Environment = Environment' ()
+
 -- | There are two modes of failure for the redundancy check:
 --
 -- 1. Exhaustivity was incomplete due to too many cases, so we couldn't determine redundancy.

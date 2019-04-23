@@ -224,7 +224,7 @@ insertValueTypes env m =
   lookupName name =
     let key = P.Qualified (Just (modName m)) name
     in case Map.lookup key (P.names env) of
-      Just (ty, _, _) ->
+      Just (ty, _, _, _) ->
         ty
       Nothing ->
         err ("name not found: " ++ show key)

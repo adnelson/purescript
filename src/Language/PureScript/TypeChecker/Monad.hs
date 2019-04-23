@@ -25,6 +25,9 @@ import Language.PureScript.Names
 import Language.PureScript.TypeClassDictionaries
 import Language.PureScript.Types
 
+type NameRecord = NameRecord' ()
+type Environment = Environment' ()
+
 -- | A substitution of unification variables for types or kinds
 data Substitution = Substitution
   { substType :: M.Map Int SourceType -- ^ Type substitution
@@ -68,7 +71,7 @@ type Unknown = Int
 -- | Temporarily bind a collection of names to values
 bindNames
   :: MonadState CheckState m
-  => M.Map (Qualified Ident) (SourceType, NameKind, NameVisibility)
+  => M.Map (Qualified Ident) (NameRecord' ())
   -> m a
   -> m a
 bindNames newNames action = do
@@ -186,7 +189,7 @@ bindLocalVariables
   -> m a
   -> m a
 bindLocalVariables bindings =
-  bindNames (M.fromList $ flip map bindings $ \(name, ty, visibility) -> (Qualified Nothing name, (ty, Private, visibility)))
+  bindNames (M.fromList $ flip map bindings $ \(name, ty, visibility) -> (Qualified Nothing name, (nameRecord ty Private visibility)))
 
 -- | Temporarily bind a collection of names to local type variables
 bindLocalTypeVariables
@@ -200,7 +203,7 @@ bindLocalTypeVariables moduleName bindings =
 
 -- | Update the visibility of all names to Defined
 makeBindingGroupVisible :: (MonadState CheckState m) => m ()
-makeBindingGroupVisible = modifyEnv $ \e -> e { names = M.map (\(ty, nk, _) -> (ty, nk, Defined)) (names e) }
+makeBindingGroupVisible = modifyEnv $ \e -> e { names = M.map (\(ty, nk, _, _) -> nameRecord ty nk Defined) (names e) }
 
 -- | Update the visibility of all names to Defined in the scope of the provided action
 withBindingGroupVisible :: (MonadState CheckState m) => m a -> m a
@@ -223,7 +226,7 @@ lookupVariable qual = do
   env <- getEnv
   case M.lookup qual (names env) of
     Nothing -> throwError . errorMessage $ NameIsUndefined (disqualify qual)
-    Just (ty, _, _) -> return ty
+    Just (ty, _, _, _) -> return ty
 
 -- | Lookup the visibility of a value by name in the @Environment@
 getVisibility
@@ -234,7 +237,7 @@ getVisibility qual = do
   env <- getEnv
   case M.lookup qual (names env) of
     Nothing -> throwError . errorMessage $ NameIsUndefined (disqualify qual)
-    Just (_, _, vis) -> return vis
+    Just (_, _, vis, _) -> return vis
 
 -- | Assert that a name is visible
 checkVisibility
@@ -267,7 +270,7 @@ getEnv = checkEnv <$> get
 getLocalContext :: MonadState CheckState m => m Context
 getLocalContext = do
   env <- getEnv
-  return [ (ident, ty') | (Qualified Nothing ident@Ident{}, (ty', _, Defined)) <- M.toList (names env) ]
+  return [ (ident, ty') | (Qualified Nothing ident@Ident{}, (ty', _, Defined, _)) <- M.toList (names env) ]
 
 -- | Update the @Environment@
 putEnv :: (MonadState CheckState m) => Environment -> m ()

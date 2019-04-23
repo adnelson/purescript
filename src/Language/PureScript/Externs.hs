@@ -10,6 +10,7 @@ module Language.PureScript.Externs
   , ExternsFixity(..)
   , ExternsTypeFixity(..)
   , ExternsDeclaration(..)
+  , CFExpr
   , moduleToExternsFile
   , applyExternsFileToEnvironment
   ) where
@@ -34,8 +35,13 @@ import Language.PureScript.Kinds
 import Language.PureScript.Names
 import Language.PureScript.TypeClassDictionaries
 import Language.PureScript.Types
+import qualified Language.PureScript.CoreFn.Expr as CF
+import qualified Language.PureScript.CoreFn.Ann as CF
 
 import Paths_purescript as Paths
+
+type CFExpr = CF.Expr CF.Ann
+type Environment = Environment' (Maybe CFExpr)
 
 -- | The data which will be serialized to an externs file
 data ExternsFile = ExternsFile
@@ -120,6 +126,9 @@ data ExternsDeclaration =
   | EDValue
       { edValueName               :: Ident
       , edValueType               :: SourceType
+      , edValue                   :: Maybe CFExpr
+      -- ^ Is 'Just' if the value is to be inlineable by child
+      -- modules.
       }
   -- | A type class declaration
   | EDClass
@@ -152,7 +161,7 @@ applyExternsFileToEnvironment ExternsFile{..} = flip (foldl' applyDecl) efDeclar
   applyDecl env (EDType pn kind tyKind) = env { types = M.insert (qual pn) (kind, tyKind) (types env) }
   applyDecl env (EDTypeSynonym pn args ty) = env { typeSynonyms = M.insert (qual pn) (args, ty) (typeSynonyms env) }
   applyDecl env (EDDataConstructor pn dTy tNm ty nms) = env { dataConstructors = M.insert (qual pn) (dTy, tNm, ty, nms) (dataConstructors env) }
-  applyDecl env (EDValue ident ty) = env { names = M.insert (Qualified (Just efModuleName) ident) (ty, External, Defined) (names env) }
+  applyDecl env (EDValue ident ty mval) = env { names = M.insert (Qualified (Just efModuleName) ident) (ty, External, Defined, mval) (names env) }
   applyDecl env (EDClass pn args members cs deps) = env { typeClasses = M.insert (qual pn) (makeTypeClassData args members cs deps) (typeClasses env) }
   applyDecl env (EDKind pn) = env { kinds = S.insert (qual pn) (kinds env) }
   applyDecl env (EDInstance className ident tys cs ch idx) =
@@ -215,8 +224,8 @@ moduleToExternsFile (Module ss _ mn ds (Just exps)) env = ExternsFile{..}
                             ]
       _ -> internalError "toExternsDeclaration: Invalid input"
   toExternsDeclaration (ValueRef _ ident)
-    | Just (ty, _, _) <- Qualified (Just mn) ident `M.lookup` names env
-    = [ EDValue ident ty ]
+    | Just (ty, _, _, mval) <- Qualified (Just mn) ident `M.lookup` names env
+    = [ EDValue ident ty mval]
   toExternsDeclaration (TypeClassRef _ className)
     | Just TypeClassData{..} <- Qualified (Just mn) className `M.lookup` typeClasses env
     , Just (kind, TypeSynonym) <- Qualified (Just mn) (coerceProperName className) `M.lookup` types env

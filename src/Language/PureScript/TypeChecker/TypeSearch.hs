@@ -24,10 +24,10 @@ import           Language.PureScript.TypeChecker.Synonyms    as P
 import           Language.PureScript.Types                   as P
 
 checkInEnvironment
-  :: Environment
+  :: Environment' ()
   -> TC.CheckState
   -> StateT TC.CheckState (SupplyT (WriterT b (Except P.MultipleErrors))) a
-  -> Maybe (a, Environment)
+  -> Maybe (a, Environment' ())
 checkInEnvironment env st =
   either (const Nothing) Just
   . runExcept
@@ -41,7 +41,7 @@ evalWriterT m = liftM fst (runWriterT m)
 checkSubsume
   :: Maybe [(P.Ident, Entailment.InstanceContext, P.SourceConstraint)]
   -- ^ Additional constraints we need to satisfy
-  -> P.Environment
+  -> Environment' ()
   -- ^ The Environment which contains the relevant definitions and typeclasses
   -> TC.CheckState
   -- ^ The typechecker state
@@ -49,7 +49,7 @@ checkSubsume
   -- ^ The user supplied type
   -> P.SourceType
   -- ^ The type supplied by the environment
-  -> Maybe ((P.Expr, [(P.Ident, Entailment.InstanceContext, P.SourceConstraint)]), P.Environment)
+  -> Maybe ((P.Expr, [(P.Ident, Entailment.InstanceContext, P.SourceConstraint)]), Environment' ())
 checkSubsume unsolved env st userT envT = checkInEnvironment env st $ do
   let initializeSkolems =
         Skolem.introduceSkolemScope
@@ -80,7 +80,7 @@ checkSubsume unsolved env st userT envT = checkInEnvironment env st $ do
 
 accessorSearch
   :: Maybe [(P.Ident, Entailment.InstanceContext, P.SourceConstraint)]
-  -> P.Environment
+  -> Environment' ()
   -> TC.CheckState
   -> P.SourceType
   -> ([(Label, P.SourceType)], [(Label, P.SourceType)])
@@ -108,7 +108,7 @@ accessorSearch unsolved env st userT = maybe ([], []) fst $ checkInEnvironment e
 typeSearch
   :: Maybe [(P.Ident, Entailment.InstanceContext, P.SourceConstraint)]
   -- ^ Additional constraints we need to satisfy
-  -> P.Environment
+  -> Environment' ()
   -- ^ The Environment which contains the relevant definitions and typeclasses
   -> TC.CheckState
   -- ^ The typechecker state
@@ -120,7 +120,7 @@ typeSearch unsolved env st type' =
     runTypeSearch :: Map k P.SourceType -> Map k P.SourceType
     runTypeSearch = Map.mapMaybe (\ty -> checkSubsume unsolved env st type' ty $> ty)
 
-    matchingNames = runTypeSearch (Map.map (\(ty, _, _) -> ty) (P.names env))
+    matchingNames = runTypeSearch (Map.map (\(ty, _, _, _) -> ty) (P.names env))
     matchingConstructors = runTypeSearch (Map.map (\(_, _, ty, _) -> ty) (P.dataConstructors env))
     (allLabels, matchingLabels) = accessorSearch unsolved env st type'
   in

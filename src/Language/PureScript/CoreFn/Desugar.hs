@@ -29,6 +29,8 @@ import Language.PureScript.Types
 import Language.PureScript.PSString (mkString)
 import qualified Language.PureScript.AST as A
 
+type Environment = Environment' ()
+
 -- | Desugars a module from AST to CoreFn representation.
 moduleToCoreFn :: Environment -> A.Module -> Module Ann
 moduleToCoreFn _ (A.Module _ _ _ _ Nothing) =
@@ -164,7 +166,7 @@ moduleToCoreFn env (A.Module modSS coms mn decls (Just exps)) =
   getValueMeta :: Qualified Ident -> Maybe Meta
   getValueMeta name =
     case lookupValue env name of
-      Just (_, External, _) -> Just IsForeign
+      Just (_, External, _, _) -> Just IsForeign
       _ -> Nothing
 
   -- | Gets metadata for data constructors.

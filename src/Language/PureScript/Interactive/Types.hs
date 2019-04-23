@@ -32,12 +32,14 @@ module Language.PureScript.Interactive.Types
 import Prelude.Compat
 
 import qualified Language.PureScript as P
+import qualified Language.PureScript.Externs as PE
 import qualified Data.Map as M
 import           Data.List (foldl')
 import           Language.PureScript.Sugar.Names.Env (nullImports, primExports)
 import           Control.Monad.Trans.Except (runExceptT)
 import           Control.Monad.Writer.Strict (runWriterT)
 
+type Environment = P.Environment' () -- Maybe PE.CFExpr)
 
 -- | The PSCI configuration.
 --
@@ -92,8 +94,8 @@ initialPSCiState = PSCiState [] [] [] initialInteractivePrint nullImports primEx
 initialInteractivePrint :: (P.ModuleName, P.Ident)
 initialInteractivePrint = (P.moduleNameFromString "PSCI.Support", P.Ident "eval")
 
-psciEnvironment :: PSCiState -> P.Environment
-psciEnvironment st = foldl' (flip P.applyExternsFileToEnvironment) P.initEnvironment externs
+psciEnvironment :: PSCiState -> Environment
+psciEnvironment st = const () <$> foldl' (flip P.applyExternsFileToEnvironment) P.initEnvironment externs
   where externs = map snd (psciLoadedExterns st)
 
 -- | All of the data that is contained by an ImportDeclaration in the AST.

@@ -54,6 +54,8 @@ import           System.Directory (doesFileExist, getModificationTime, createDir
 import           System.FilePath ((</>), takeDirectory, makeRelative, splitPath, normalise)
 import qualified Text.Parsec as Parsec
 
+type Environment = Environment' ()
+
 -- | Determines when to rebuild a module
 data RebuildPolicy
   -- | Never rebuild this module

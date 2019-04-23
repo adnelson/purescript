@@ -1,6 +1,6 @@
 module Language.PureScript.CoreFn.Optimizer (optimizeCoreFn) where
 
-import Protolude hiding (Type)
+import Protolude hiding (Type, reduce)
 
 import Data.List (lookup)
 import Language.PureScript.AST.Literals
@@ -8,6 +8,7 @@ import Language.PureScript.AST.SourcePos
 import Language.PureScript.CoreFn.Ann
 import Language.PureScript.CoreFn.Expr
 import Language.PureScript.CoreFn.Module
+import Language.PureScript.CoreFn.Reduce
 import Language.PureScript.CoreFn.Traversals
 import Language.PureScript.Names (Ident(UnusedIdent), Qualified(Qualified))
 import Language.PureScript.Label
@@ -24,7 +25,7 @@ optimizeModuleDecls :: [Bind Ann] -> [Bind Ann]
 optimizeModuleDecls = map transformBinds
   where
   (transformBinds, _, _) = everywhereOnValues identity transformExprs identity
-  transformExprs = optimizeUnusedPartialFn . optimizeClosedRecordUpdate
+  transformExprs = optimizeUnusedPartialFn . optimizeClosedRecordUpdate . reduce mempty
 
 optimizeClosedRecordUpdate :: Expr Ann -> Expr Ann
 optimizeClosedRecordUpdate ou@(ObjectUpdate a@(_, _, Just t, _) r updatedFields) =

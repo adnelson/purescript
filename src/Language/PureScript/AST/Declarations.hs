@@ -43,7 +43,7 @@ type Context = [(Ident, SourceType)]
 
 -- | Holds the data necessary to do type directed search for typed holes
 data TypeSearch
-  = TSBefore Environment
+  = TSBefore (Environment' ())
   -- ^ An Environment captured for later consumption by type directed search
   | TSAfter
     { tsAfterIdentifiers :: [(Qualified Text, SourceType)]

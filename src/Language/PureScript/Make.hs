@@ -44,6 +44,7 @@ import qualified Language.PureScript.CoreFn as CF
 import           System.Directory (doesFileExist)
 import           System.FilePath (replaceExtension)
 
+
 -- | Rebuild a single module.
 --
 -- This function is used for fast-rebuild workflows (PSCi and psc-ide are examples).
@@ -61,7 +62,8 @@ rebuildModule MakeActions{..} externs m@(Module _ _ moduleName _ _) = do
   lint withPrim
   ((Module ss coms _ elaborated exps, env'), nextVar) <- runSupplyT 0 $ do
     [desugared] <- desugar externs [withPrim]
-    runCheck' (emptyCheckState env) $ typeCheckModule desugared
+    let env' = fmap (const ()) env
+    runCheck' (emptyCheckState env') $ typeCheckModule desugared
 
   -- desugar case declarations *after* type- and exhaustiveness checking
   -- since pattern guards introduces cases which the exhaustiveness checker
@@ -71,10 +73,11 @@ rebuildModule MakeActions{..} externs m@(Module _ _ moduleName _ _) = do
 
   regrouped <- createBindingGroups moduleName . collapseBindingGroups $ deguarded
   let mod' = Module ss coms moduleName regrouped exps
+      -- TODO could get a hash of this and stop if it's unchanged
       corefn = CF.moduleToCoreFn env' mod'
       optimized = CF.optimizeCoreFn corefn
       [renamed] = renameInModules [optimized]
-      exts = moduleToExternsFile mod' env'
+      exts = moduleToExternsFile mod' (fmap (const Nothing) env')
   ffiCodegen renamed
   evalSupplyT nextVar' . codegen renamed env' . encode $ exts
   return exts
