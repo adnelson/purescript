@@ -36,8 +36,9 @@ import Language.PureScript.Pretty.Values (prettyPrintBinderAtom)
 import Language.PureScript.Traversals
 import Language.PureScript.Types as P
 import qualified Language.PureScript.Constants as C
+import qualified Language.PureScript.Externs as PE
 
-type Environment = Environment' ()
+type Environment = Environment' (Maybe PE.CFExpr)
 
 -- | There are two modes of failure for the redundancy check:
 --

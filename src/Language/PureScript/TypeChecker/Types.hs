@@ -62,6 +62,7 @@ import Language.PureScript.TypeChecker.Unify
 import Language.PureScript.Types
 import Language.PureScript.Label (Label(..))
 import Language.PureScript.PSString (PSString)
+import qualified Language.PureScript.Externs as PE
 
 data BindingGroupType
   = RecursiveBindingGroup
@@ -155,7 +156,7 @@ typesOf bindingGroupType moduleName vals = withFreshSubstitution $ do
         let subst = checkSubstitution st
             searchResult = onTypeSearchTypes
               (substituteType subst)
-              (uncurry TSAfter (typeSearch cons env st (substituteType subst ty)))
+              (uncurry TSAfter (typeSearch cons (const Nothing <$> env) st (substituteType subst ty)))
         in ErrorMessage hints (HoleInferredType x ty y (Just searchResult))
       other -> other
 
@@ -181,7 +182,7 @@ data SplitBindingGroup = SplitBindingGroup
   -- ^ The untyped expressions
   , _splitBindingGroupTyped :: [((SourceAnn, Ident), (Expr, SourceType, Bool))]
   -- ^ The typed expressions, along with their type annotations
-  , _splitBindingGroupNames :: M.Map (Qualified Ident) NameRecord
+  , _splitBindingGroupNames :: M.Map (Qualified Ident) PE.NameRecord
   -- ^ A map containing all expressions and their assigned types (which might be
   -- fresh unification variables). These will be added to the 'Environment' after
   -- the binding group is checked, so the value type of the 'Map' is chosen to be
@@ -232,7 +233,7 @@ checkTypedBindingGroupElement
   => ModuleName
   -> ((SourceAnn, Ident), (Expr, SourceType, Bool))
   -- ^ The identifier we are trying to define, along with the expression and its type annotation
-  -> M.Map (Qualified Ident) NameRecord
+  -> M.Map (Qualified Ident) PE.NameRecord
   -- ^ Names brought into scope in this binding group
   -> m ((SourceAnn, Ident), (Expr, SourceType))
 checkTypedBindingGroupElement mn (ident, (val, ty, checkType)) dict = do
@@ -254,7 +255,7 @@ typeForBindingGroupElement
   => ((SourceAnn, Ident), (Expr, SourceType))
   -- ^ The identifier we are trying to define, along with the expression and its assigned type
   -- (at this point, this should be a unification variable)
-  -> M.Map (Qualified Ident) NameRecord
+  -> M.Map (Qualified Ident) PE.NameRecord
   -- ^ Names brought into scope in this binding group
   -> m ((SourceAnn, Ident), (Expr, SourceType))
 typeForBindingGroupElement (ident, (val, ty)) dict = do
@@ -415,7 +416,7 @@ infer' (Hole name) = do
   ty <- freshType
   ctx <- getLocalContext
   env <- getEnv
-  tell . errorMessage $ HoleInferredType name ty ctx . Just $ TSBefore env
+  tell . errorMessage $ HoleInferredType name ty ctx . Just $ TSBefore (const () <$> env)
   return $ TypedValue True (Hole name) ty
 infer' (PositionedValue pos c val) = warnAndRethrowWithPositionTC pos $ do
   TypedValue t v ty <- infer' val
@@ -450,7 +451,7 @@ inferLetBinding seen (ValueDecl sa@(ss, _) ident nameKind [] [MkUnguarded val] :
     $ inferLetBinding (seen ++ [ValueDecl sa ident nameKind [] [MkUnguarded val']]) rest ret j
 inferLetBinding seen (BindingGroupDeclaration ds : rest) ret j = do
   Just moduleName <- checkCurrentModule <$> get
-  SplitBindingGroup untyped typed (dict  :: M.Map (Qualified Ident) NameRecord) <- typeDictionaryForBindingGroup Nothing . NEL.toList $ fmap (\(i, _, v) -> (i, v)) ds
+  SplitBindingGroup untyped typed (dict  :: M.Map (Qualified Ident) PE.NameRecord) <- typeDictionaryForBindingGroup Nothing . NEL.toList $ fmap (\(i, _, v) -> (i, v)) ds
   ds1' <- parU typed $ \e -> checkTypedBindingGroupElement moduleName e dict
   ds2' <- forM untyped $ \e -> typeForBindingGroupElement e dict
   let ds' = NEL.fromList [(ident, Private, val') | (ident, (val', _)) <- ds1' ++ ds2']

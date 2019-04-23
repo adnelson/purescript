@@ -9,12 +9,13 @@ import qualified Data.Text as T
 import           Data.Text (Text)
 import qualified Language.PureScript as P
 import qualified Text.PrettyPrint.Boxes as Box
+import qualified Language.PureScript.Externs as PE
 
 -- TODO (Christoph): Text version of boxes
 textT :: Text -> Box.Box
 textT = Box.text . T.unpack
 
-type NameRecord = P.NameRecord' ()
+type NameRecord = P.NameRecord' (Maybe PE.CFExpr)
 
 -- Printers
 

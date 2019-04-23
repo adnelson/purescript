@@ -61,7 +61,7 @@ rebuild
   -> P.Make (P.ExternsFile, P.Environment)
 rebuild loadedExterns m = do
     externs <- P.rebuildModule buildActions loadedExterns m
-    return (externs, const () <$> foldl' (flip P.applyExternsFileToEnvironment) P.initEnvironment (loadedExterns ++ [externs]))
+    return (externs, foldl' (flip P.applyExternsFileToEnvironment) P.initEnvironment (loadedExterns ++ [externs]))
   where
     buildActions :: P.MakeActions P.Make
     buildActions =
@@ -80,7 +80,7 @@ make
 make ms = do
     foreignFiles <- P.inferForeignModules filePathMap
     externs <- P.make (buildActions foreignFiles) (map snd ms)
-    return (externs, const () <$> foldl' (flip P.applyExternsFileToEnvironment) P.initEnvironment externs)
+    return (externs, foldl' (flip P.applyExternsFileToEnvironment) P.initEnvironment externs)
   where
     buildActions :: M.Map P.ModuleName FilePath -> P.MakeActions P.Make
     buildActions foreignFiles =

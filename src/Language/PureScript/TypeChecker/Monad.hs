@@ -24,9 +24,8 @@ import Language.PureScript.Kinds
 import Language.PureScript.Names
 import Language.PureScript.TypeClassDictionaries
 import Language.PureScript.Types
-
-type NameRecord = NameRecord' ()
-type Environment = Environment' ()
+import Language.PureScript.Externs (Environment, NameRecord)
+import qualified Language.PureScript.Externs as Externs
 
 -- | A substitution of unification variables for types or kinds
 data Substitution = Substitution
@@ -71,12 +70,16 @@ type Unknown = Int
 -- | Temporarily bind a collection of names to values
 bindNames
   :: MonadState CheckState m
-  => M.Map (Qualified Ident) (NameRecord' ())
+  => M.Map (Qualified Ident) NameRecord
   -> m a
   -> m a
 bindNames newNames action = do
   orig <- get
-  modify $ \st -> st { checkEnv = (checkEnv st) { names = newNames `M.union` (names . checkEnv $ st) } }
+  modify $ \st -> st {
+    checkEnv = (checkEnv st) {
+      names = newNames `M.union` (names . checkEnv $ st)
+      }
+    }
   a <- action
   modify $ \st -> st { checkEnv = (checkEnv st) { names = names . checkEnv $ orig } }
   return a

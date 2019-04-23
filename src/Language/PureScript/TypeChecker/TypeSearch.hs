@@ -22,12 +22,13 @@ import           Language.PureScript.Pretty.Types            as P
 import           Language.PureScript.TypeChecker.Skolems     as Skolem
 import           Language.PureScript.TypeChecker.Synonyms    as P
 import           Language.PureScript.Types                   as P
+import qualified Language.PureScript.Externs as PE
 
 checkInEnvironment
-  :: Environment' ()
+  :: PE.Environment
   -> TC.CheckState
   -> StateT TC.CheckState (SupplyT (WriterT b (Except P.MultipleErrors))) a
-  -> Maybe (a, Environment' ())
+  -> Maybe (a, PE.Environment)
 checkInEnvironment env st =
   either (const Nothing) Just
   . runExcept
@@ -41,7 +42,7 @@ evalWriterT m = liftM fst (runWriterT m)
 checkSubsume
   :: Maybe [(P.Ident, Entailment.InstanceContext, P.SourceConstraint)]
   -- ^ Additional constraints we need to satisfy
-  -> Environment' ()
+  -> PE.Environment
   -- ^ The Environment which contains the relevant definitions and typeclasses
   -> TC.CheckState
   -- ^ The typechecker state
@@ -49,7 +50,7 @@ checkSubsume
   -- ^ The user supplied type
   -> P.SourceType
   -- ^ The type supplied by the environment
-  -> Maybe ((P.Expr, [(P.Ident, Entailment.InstanceContext, P.SourceConstraint)]), Environment' ())
+  -> Maybe ((P.Expr, [(P.Ident, Entailment.InstanceContext, P.SourceConstraint)]), PE.Environment)
 checkSubsume unsolved env st userT envT = checkInEnvironment env st $ do
   let initializeSkolems =
         Skolem.introduceSkolemScope
@@ -80,7 +81,7 @@ checkSubsume unsolved env st userT envT = checkInEnvironment env st $ do
 
 accessorSearch
   :: Maybe [(P.Ident, Entailment.InstanceContext, P.SourceConstraint)]
-  -> Environment' ()
+  -> PE.Environment
   -> TC.CheckState
   -> P.SourceType
   -> ([(Label, P.SourceType)], [(Label, P.SourceType)])
@@ -108,7 +109,7 @@ accessorSearch unsolved env st userT = maybe ([], []) fst $ checkInEnvironment e
 typeSearch
   :: Maybe [(P.Ident, Entailment.InstanceContext, P.SourceConstraint)]
   -- ^ Additional constraints we need to satisfy
-  -> Environment' ()
+  -> PE.Environment
   -- ^ The Environment which contains the relevant definitions and typeclasses
   -> TC.CheckState
   -- ^ The typechecker state

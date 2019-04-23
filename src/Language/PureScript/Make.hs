@@ -62,8 +62,7 @@ rebuildModule MakeActions{..} externs m@(Module _ _ moduleName _ _) = do
   lint withPrim
   ((Module ss coms _ elaborated exps, env'), nextVar) <- runSupplyT 0 $ do
     [desugared] <- desugar externs [withPrim]
-    let env' = fmap (const ()) env
-    runCheck' (emptyCheckState env') $ typeCheckModule desugared
+    runCheck' (emptyCheckState env) $ typeCheckModule desugared
 
   -- desugar case declarations *after* type- and exhaustiveness checking
   -- since pattern guards introduces cases which the exhaustiveness checker
@@ -77,7 +76,8 @@ rebuildModule MakeActions{..} externs m@(Module _ _ moduleName _ _) = do
       corefn = CF.moduleToCoreFn env' mod'
       optimized = CF.optimizeCoreFn corefn
       [renamed] = renameInModules [optimized]
-      exts = moduleToExternsFile mod' (fmap (const Nothing) env')
+      -- TODO here is where we would read them out of the other file
+      exts = moduleToExternsFile mod' env'
   ffiCodegen renamed
   evalSupplyT nextVar' . codegen renamed env' . encode $ exts
   return exts

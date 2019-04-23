@@ -42,8 +42,8 @@ nrVisibility (_, _, v, _) = v
 nrExpr :: NameRecord' e -> e
 nrExpr ( _, _, _, e) = e
 
-nameRecord :: SourceType -> NameKind -> NameVisibility -> NameRecord' ()
-nameRecord st nk nv = (st, nk, nv, ())
+nameRecord :: SourceType -> NameKind -> NameVisibility -> NameRecord' (Maybe a)
+nameRecord st nk nv = (st, nk, nv, Nothing)
 
 -- | The @Environment@ defines all values and types which are currently in scope:
 data Environment' expr = Environment

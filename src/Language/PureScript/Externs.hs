@@ -11,6 +11,8 @@ module Language.PureScript.Externs
   , ExternsTypeFixity(..)
   , ExternsDeclaration(..)
   , CFExpr
+  , Environment
+  , NameRecord
   , moduleToExternsFile
   , applyExternsFileToEnvironment
   ) where
@@ -41,6 +43,7 @@ import qualified Language.PureScript.CoreFn.Ann as CF
 import Paths_purescript as Paths
 
 type CFExpr = CF.Expr CF.Ann
+type NameRecord = NameRecord' (Maybe CFExpr)
 type Environment = Environment' (Maybe CFExpr)
 
 -- | The data which will be serialized to an externs file

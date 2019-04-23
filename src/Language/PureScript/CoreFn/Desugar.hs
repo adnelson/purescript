@@ -28,11 +28,10 @@ import Language.PureScript.Sugar.TypeClasses (typeClassMemberName, superClassDic
 import Language.PureScript.Types
 import Language.PureScript.PSString (mkString)
 import qualified Language.PureScript.AST as A
-
-type Environment = Environment' ()
+import qualified Language.PureScript.Externs as PE
 
 -- | Desugars a module from AST to CoreFn representation.
-moduleToCoreFn :: Environment -> A.Module -> Module Ann
+moduleToCoreFn :: PE.Environment -> A.Module -> Module Ann
 moduleToCoreFn _ (A.Module _ _ _ _ Nothing) =
   internalError "Module exports were not elaborated before moduleToCoreFn"
 moduleToCoreFn env (A.Module modSS coms mn decls (Just exps)) =
