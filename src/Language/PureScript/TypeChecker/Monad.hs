@@ -25,7 +25,6 @@ import Language.PureScript.Names
 import Language.PureScript.TypeClassDictionaries
 import Language.PureScript.Types
 import Language.PureScript.Externs (Environment, NameRecord)
-import qualified Language.PureScript.Externs as Externs
 
 -- | A substitution of unification variables for types or kinds
 data Substitution = Substitution

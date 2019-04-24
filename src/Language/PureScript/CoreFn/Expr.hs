@@ -6,7 +6,9 @@ module Language.PureScript.CoreFn.Expr where
 
 import Prelude.Compat
 import qualified Data.Set as S
-import Data.Aeson (ToJSON, FromJSON)
+import Control.DeepSeq (NFData)
+import Data.Aeson
+import Data.Text (Text)
 
 import GHC.Generics (Generic)
 import Control.Arrow ((***))
@@ -58,6 +60,7 @@ data Expr a
   | Let a [Bind a] (Expr a)
   deriving (Show, Functor, Generic)
 
+instance NFData a => NFData (Expr a)
 instance ToJSON a => ToJSON (Expr a)
 instance FromJSON a => FromJSON (Expr a)
 
@@ -74,8 +77,12 @@ data Bind a
   --
   | Rec [((a, Ident), Expr a)] deriving (Show, Functor, Generic)
 
+instance NFData a => NFData (Bind a)
 instance ToJSON a => ToJSON (Bind a)
 instance FromJSON a => FromJSON (Bind a)
+
+bindListIdents :: [Bind a] -> S.Set Ident
+bindListIdents binds = foldr S.union S.empty (map bindIdents binds)
 
 bindIdents :: Bind a -> S.Set Ident
 bindIdents = \case
@@ -102,6 +109,7 @@ data CaseAlternative a = CaseAlternative
   } deriving (Show, Generic)
 
 
+instance NFData a => NFData (CaseAlternative a)
 instance ToJSON a => ToJSON (CaseAlternative a)
 instance FromJSON a => FromJSON (CaseAlternative a)
 

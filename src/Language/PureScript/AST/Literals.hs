@@ -5,6 +5,7 @@
 module Language.PureScript.AST.Literals where
 import Data.Aeson (ToJSON, FromJSON)
 import GHC.Generics (Generic)
+import Control.DeepSeq (NFData)
 
 import Prelude.Compat
 import Language.PureScript.PSString (PSString)
@@ -40,5 +41,6 @@ data Literal a
   | ObjectLiteral [(PSString, a)]
   deriving (Eq, Ord, Show, Functor, Generic)
 
+instance NFData a => NFData (Literal a)
 instance ToJSON a => ToJSON (Literal a)
 instance FromJSON a => FromJSON (Literal a)

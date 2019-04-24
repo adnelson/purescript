@@ -33,7 +33,6 @@ import Prelude.Compat
 
 import qualified Language.PureScript as P
 import           Language.PureScript.Externs (Environment)
-import qualified Language.PureScript.Externs as PE
 import qualified Data.Map as M
 import           Data.List (foldl')
 import           Language.PureScript.Sugar.Names.Env (nullImports, primExports)

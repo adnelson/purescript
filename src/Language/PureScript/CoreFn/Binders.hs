@@ -8,6 +8,7 @@ import Prelude.Compat
 import qualified Data.Set as S
 import Data.Aeson (ToJSON, FromJSON)
 import GHC.Generics (Generic)
+import Control.DeepSeq (NFData)
 
 import Language.PureScript.AST.Literals
 import Language.PureScript.Names
@@ -37,6 +38,7 @@ data Binder a
   --
   | NamedBinder a Ident (Binder a) deriving (Show, Functor, Generic)
 
+instance NFData a => NFData (Binder a)
 instance ToJSON a => ToJSON (Binder a)
 instance FromJSON a => FromJSON (Binder a)
 

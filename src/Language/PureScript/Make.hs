@@ -9,6 +9,8 @@ module Language.PureScript.Make
   ) where
 
 import           Prelude.Compat
+import Debug.Trace (traceM)
+import qualified Data.ByteString.Lazy.Char8 as BL8
 
 import           Control.Concurrent.Lifted as C
 import           Control.Monad hiding (sequence)
@@ -75,8 +77,11 @@ rebuildModule MakeActions{..} externs m@(Module _ _ moduleName _ _) = do
       -- TODO could get a hash of this and stop if it's unchanged
       corefn = CF.moduleToCoreFn env' mod'
       optimized = CF.optimizeCoreFn corefn
-      [renamed] = renameInModules [optimized]
-      -- TODO here is where we would read them out of the other file
+  let encode_ = BL8.unpack . encode
+  traceM $ "Corefn:\n" ++ encode_ corefn ++ "\nOptimized:\n" ++ encode_ optimized
+  let renamed = renameInModule optimized
+      -- TODO here is where we would read them out of the other file.
+      -- I think we need to update the env with the optimized values.
       exts = moduleToExternsFile mod' env'
   ffiCodegen renamed
   evalSupplyT nextVar' . codegen renamed env' . encode $ exts

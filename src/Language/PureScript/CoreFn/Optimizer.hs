@@ -1,6 +1,7 @@
 module Language.PureScript.CoreFn.Optimizer (optimizeCoreFn) where
 
 import Protolude hiding (Type, reduce)
+import qualified Data.Map as M
 
 import Data.List (lookup)
 import Language.PureScript.AST.Literals
@@ -19,13 +20,23 @@ import qualified Language.PureScript.Constants as C
 -- CoreFn optimization pass.
 --
 optimizeCoreFn :: Module Ann -> Module Ann
-optimizeCoreFn m = m {moduleDecls = optimizeModuleDecls $ moduleDecls m}
+optimizeCoreFn m = do
+  m {moduleDecls = optimizeModuleDecls $ moduleDecls m}
+
+reduceDecls :: [Bind Ann] -> [Bind Ann]
+reduceDecls = map (runReduced <$>) . snd . foldr step (mempty, []) where
+  step :: Bind Ann -> (Scope Ann, [Bind (Reduced Ann)]) -> (Scope Ann, [Bind (Reduced Ann)])
+  step bind (scope, otherBindings) = do
+    let (scope', newScope, bind') = reduceBind scope ["optimize module decls " ++ show (M.keys scope)] bind
+
+    trace (encScope newScope)
+      (scope', bind' : otherBindings)
 
 optimizeModuleDecls :: [Bind Ann] -> [Bind Ann]
-optimizeModuleDecls = map transformBinds
+optimizeModuleDecls = map transformBinds . reduceDecls
   where
   (transformBinds, _, _) = everywhereOnValues identity transformExprs identity
-  transformExprs = optimizeUnusedPartialFn . optimizeClosedRecordUpdate . reduce mempty
+  transformExprs = optimizeUnusedPartialFn . optimizeClosedRecordUpdate
 
 optimizeClosedRecordUpdate :: Expr Ann -> Expr Ann
 optimizeClosedRecordUpdate ou@(ObjectUpdate a@(_, _, Just t, _) r updatedFields) =

@@ -7,6 +7,7 @@ module Language.PureScript.CoreFn.Meta where
 import Prelude.Compat
 import Data.Aeson (ToJSON, FromJSON)
 import GHC.Generics (Generic)
+import Control.DeepSeq (NFData)
 
 import Language.PureScript.Names
 
@@ -36,6 +37,7 @@ data Meta
   | IsWhere
   deriving (Show, Eq, Ord, Generic)
 
+instance NFData Meta
 instance ToJSON Meta
 instance FromJSON Meta
 
@@ -52,5 +54,6 @@ data ConstructorType
   --
   | SumType deriving (Show, Eq, Ord, Generic)
 
+instance NFData ConstructorType
 instance ToJSON ConstructorType
 instance FromJSON ConstructorType

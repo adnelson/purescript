@@ -1,7 +1,7 @@
 -- |
 -- Renaming pass that prevents shadowing of local identifiers.
 --
-module Language.PureScript.Renamer (renameInModules) where
+module Language.PureScript.Renamer (renameInModule, renameInModules) where
 
 import Prelude.Compat
 
@@ -102,17 +102,18 @@ findDeclIdents = concatMap go
   go (NonRec _ ident _) = [ident]
   go (Rec ds) = map (snd . fst) ds
 
--- |
--- Renames within each declaration in a module.
---
-renameInModules :: [Module Ann] -> [Module Ann]
-renameInModules = map go
-  where
-  go :: Module Ann -> Module Ann
-  go m@(Module _ _ _ _ _ _ _ decls) = m { moduleDecls = map (renameInDecl' (findDeclIdents decls)) decls }
+renameInModule :: Module Ann -> Module Ann
+renameInModule m@(Module _ _ _ _ _ _ _ decls) = m' where
+  m' = m { moduleDecls = map (renameInDecl' (findDeclIdents decls)) decls }
 
   renameInDecl' :: [Ident] -> Bind Ann -> Bind Ann
   renameInDecl' scope = runRename scope . renameInDecl True
+
+-- |
+-- Renames within each declaration in multiple modules.
+--
+renameInModules :: [Module Ann] -> [Module Ann]
+renameInModules = map renameInModule
 
 -- |
 -- Renames within a declaration. isTopLevel is used to determine whether the

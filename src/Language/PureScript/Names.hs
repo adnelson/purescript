@@ -85,6 +85,8 @@ data Ident
 
 instance NFData Ident
 
+instance ToJSONKey Ident
+
 runIdent :: Ident -> Text
 runIdent (Ident i) = i
 runIdent (GenIdent Nothing n) = "$" <> T.pack (show n)
@@ -187,6 +189,7 @@ data Qualified a = Qualified (Maybe ModuleName) a
   deriving (Show, Eq, Ord, Functor, Foldable, Traversable, Generic)
 
 instance NFData a => NFData (Qualified a)
+instance (ToJSON a, ToJSONKey a) => ToJSONKey (Qualified a)
 
 showQualified :: (a -> Text) -> Qualified a -> Text
 showQualified f (Qualified Nothing a) = f a

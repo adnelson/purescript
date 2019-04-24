@@ -1,0 +1,312 @@
+{
+    "moduleImports": [
+        [
+            [
+                {
+                    "start": [
+                        4,
+                        1
+                    ],
+                    "name": "/Users/allen/workspace/purescript/purescript/tests/purs/passing/1991.purs",
+                    "end": [
+                        4,
+                        28
+                    ]
+                },
+                [],
+                null,
+                null
+            ],
+            [
+                "Effect",
+                "Console"
+            ]
+        ],
+        [
+            [
+                {
+                    "start": [
+                        3,
+                        1
+                    ],
+                    "name": "/Users/allen/workspace/purescript/purescript/tests/purs/passing/1991.purs",
+                    "end": [
+                        3,
+                        15
+                    ]
+                },
+                [],
+                null,
+                null
+            ],
+            [
+                "Prelude"
+            ]
+        ],
+        [
+            [
+                {
+                    "start": [
+                        1,
+                        1
+                    ],
+                    "name": "/Users/allen/workspace/purescript/purescript/tests/purs/passing/1991.purs",
+                    "end": [
+                        10,
+                        6
+                    ]
+                },
+                [],
+                null,
+                null
+            ],
+            [
+                "Prim"
+            ]
+        ]
+    ],
+    "moduleDecls": [
+        {
+            "tag": "NonRec",
+            "contents": [
+                [
+                    {
+                        "start": [
+                            6,
+                            1
+                        ],
+                        "name": "/Users/allen/workspace/purescript/purescript/tests/purs/passing/1991.purs",
+                        "end": [
+                            6,
+                            9
+                        ]
+                    },
+                    [],
+                    null,
+                    null
+                ],
+                {
+                    "Ident": "z"
+                },
+                {
+                    "tag": "Let",
+                    "contents": [
+                        [
+                            {
+                                "start": [
+                                    8,
+                                    3
+                                ],
+                                "name": "/Users/allen/workspace/purescript/purescript/tests/purs/passing/1991.purs",
+                                "end": [
+                                    10,
+                                    6
+                                ]
+                            },
+                            [],
+                            {
+                                "annotation": [
+                                    {
+                                        "start": [
+                                            6,
+                                            6
+                                        ],
+                                        "name": "/Users/allen/workspace/purescript/purescript/tests/purs/passing/1991.purs",
+                                        "end": [
+                                            6,
+                                            9
+                                        ]
+                                    },
+                                    []
+                                ],
+                                "tag": "TypeConstructor",
+                                "contents": [
+                                    [
+                                        "Prim"
+                                    ],
+                                    "Int"
+                                ]
+                            },
+                            null
+                        ],
+                        [
+                            {
+                                "tag": "NonRec",
+                                "contents": [
+                                    [
+                                        {
+                                            "start": [
+                                                8,
+                                                7
+                                            ],
+                                            "name": "/Users/allen/workspace/purescript/purescript/tests/purs/passing/1991.purs",
+                                            "end": [
+                                                9,
+                                                7
+                                            ]
+                                        },
+                                        [],
+                                        null,
+                                        null
+                                    ],
+                                    {
+                                        "Ident": "x"
+                                    },
+                                    {
+                                        "tag": "Literal",
+                                        "contents": [
+                                            [
+                                                {
+                                                    "start": [
+                                                        8,
+                                                        11
+                                                    ],
+                                                    "name": "/Users/allen/workspace/purescript/purescript/tests/purs/passing/1991.purs",
+                                                    "end": [
+                                                        9,
+                                                        7
+                                                    ]
+                                                },
+                                                [],
+                                                null,
+                                                null
+                                            ],
+                                            {
+                                                "tag": "NumericLiteral",
+                                                "contents": {
+                                                    "Left": 1
+                                                }
+                                            }
+                                        ]
+                                    }
+                                ]
+                            },
+                            {
+                                "tag": "NonRec",
+                                "contents": [
+                                    [
+                                        {
+                                            "start": [
+                                                9,
+                                                7
+                                            ],
+                                            "name": "/Users/allen/workspace/purescript/purescript/tests/purs/passing/1991.purs",
+                                            "end": [
+                                                9,
+                                                12
+                                            ]
+                                        },
+                                        [],
+                                        null,
+                                        null
+                                    ],
+                                    {
+                                        "Ident": "y"
+                                    },
+                                    {
+                                        "tag": "Var",
+                                        "contents": [
+                                            [
+                                                {
+                                                    "start": [
+                                                        9,
+                                                        11
+                                                    ],
+                                                    "name": "/Users/allen/workspace/purescript/purescript/tests/purs/passing/1991.purs",
+                                                    "end": [
+                                                        9,
+                                                        12
+                                                    ]
+                                                },
+                                                [],
+                                                null,
+                                                null
+                                            ],
+                                            [
+                                                null,
+                                                {
+                                                    "Ident": "x"
+                                                }
+                                            ]
+                                        ]
+                                    }
+                                ]
+                            }
+                        ],
+                        {
+                            "tag": "Var",
+                            "contents": [
+                                [
+                                    {
+                                        "start": [
+                                            10,
+                                            6
+                                        ],
+                                        "name": "/Users/allen/workspace/purescript/purescript/tests/purs/passing/1991.purs",
+                                        "end": [
+                                            10,
+                                            6
+                                        ]
+                                    },
+                                    [],
+                                    {
+                                        "annotation": [
+                                            {
+                                                "start": [
+                                                    6,
+                                                    6
+                                                ],
+                                                "name": "/Users/allen/workspace/purescript/purescript/tests/purs/passing/1991.purs",
+                                                "end": [
+                                                    6,
+                                                    9
+                                                ]
+                                            },
+                                            []
+                                        ],
+                                        "tag": "TypeConstructor",
+                                        "contents": [
+                                            [
+                                                "Prim"
+                                            ],
+                                            "Int"
+                                        ]
+                                    },
+                                    null
+                                ],
+                                [
+                                    null,
+                                    {
+                                        "Ident": "y"
+                                    }
+                                ]
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ],
+    "moduleComments": [],
+    "moduleExports": [
+        {
+            "Ident": "z"
+        }
+    ],
+    "moduleName": [
+        "Main"
+    ],
+    "moduleSourceSpan": {
+        "start": [
+            1,
+            1
+        ],
+        "name": "/Users/allen/workspace/purescript/purescript/tests/purs/passing/1991.purs",
+        "end": [
+            10,
+            6
+        ]
+    },
+    "moduleForeign": [],
+    "modulePath": "/Users/allen/workspace/purescript/purescript/tests/purs/passing/1991.purs"
+}

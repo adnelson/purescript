@@ -1,0 +1,425 @@
+[
+    [
+        {
+            "Ident": "as"
+        },
+        {
+            "tag": "Literal",
+            "contents": [
+                [],
+                {
+                    "tag": "ArrayLiteral",
+                    "contents": [
+                        {
+                            "tag": "Literal",
+                            "contents": [
+                                [],
+                                {
+                                    "tag": "NumericLiteral",
+                                    "contents": {
+                                        "Left": 1
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            "tag": "Literal",
+                            "contents": [
+                                [],
+                                {
+                                    "tag": "NumericLiteral",
+                                    "contents": {
+                                        "Left": 2
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            "tag": "Literal",
+                            "contents": [
+                                [],
+                                {
+                                    "tag": "NumericLiteral",
+                                    "contents": {
+                                        "Left": 3
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            "tag": "Literal",
+                            "contents": [
+                                [],
+                                {
+                                    "tag": "NumericLiteral",
+                                    "contents": {
+                                        "Left": 4
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            "tag": "Literal",
+                            "contents": [
+                                [],
+                                {
+                                    "tag": "NumericLiteral",
+                                    "contents": {
+                                        "Left": 5
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ],
+    [
+        {
+            "Ident": "as'"
+        },
+        {
+            "tag": "App",
+            "contents": [
+                [],
+                {
+                    "tag": "App",
+                    "contents": [
+                        [],
+                        {
+                            "tag": "App",
+                            "contents": [
+                                [],
+                                {
+                                    "tag": "Var",
+                                    "contents": [
+                                        [],
+                                        [
+                                            [
+                                                "Main"
+                                            ],
+                                            {
+                                                "Ident": "foldMap"
+                                            }
+                                        ]
+                                    ]
+                                },
+                                {
+                                    "tag": "Var",
+                                    "contents": [
+                                        [],
+                                        [
+                                            [
+                                                "Data",
+                                                "Semigroup"
+                                            ],
+                                            {
+                                                "Ident": "semigroupArray"
+                                            }
+                                        ]
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "tag": "Abs",
+                            "contents": [
+                                [],
+                                {
+                                    "Ident": "x"
+                                },
+                                {
+                                    "tag": "Case",
+                                    "contents": [
+                                        [],
+                                        [
+                                            {
+                                                "tag": "App",
+                                                "contents": [
+                                                    [],
+                                                    {
+                                                        "tag": "App",
+                                                        "contents": [
+                                                            [],
+                                                            {
+                                                                "tag": "App",
+                                                                "contents": [
+                                                                    [],
+                                                                    {
+                                                                        "tag": "Var",
+                                                                        "contents": [
+                                                                            [],
+                                                                            [
+                                                                                [
+                                                                                    "Data",
+                                                                                    "HeytingAlgebra"
+                                                                                ],
+                                                                                {
+                                                                                    "Ident": "conj"
+                                                                                }
+                                                                            ]
+                                                                        ]
+                                                                    },
+                                                                    {
+                                                                        "tag": "Var",
+                                                                        "contents": [
+                                                                            [],
+                                                                            [
+                                                                                [
+                                                                                    "Data",
+                                                                                    "HeytingAlgebra"
+                                                                                ],
+                                                                                {
+                                                                                    "Ident": "heytingAlgebraBoolean"
+                                                                                }
+                                                                            ]
+                                                                        ]
+                                                                    }
+                                                                ]
+                                                            },
+                                                            {
+                                                                "tag": "App",
+                                                                "contents": [
+                                                                    [],
+                                                                    {
+                                                                        "tag": "App",
+                                                                        "contents": [
+                                                                            [],
+                                                                            {
+                                                                                "tag": "App",
+                                                                                "contents": [
+                                                                                    [],
+                                                                                    {
+                                                                                        "tag": "Var",
+                                                                                        "contents": [
+                                                                                            [],
+                                                                                            [
+                                                                                                [
+                                                                                                    "Data",
+                                                                                                    "Ord"
+                                                                                                ],
+                                                                                                {
+                                                                                                    "Ident": "lessThan"
+                                                                                                }
+                                                                                            ]
+                                                                                        ]
+                                                                                    },
+                                                                                    {
+                                                                                        "tag": "Var",
+                                                                                        "contents": [
+                                                                                            [],
+                                                                                            [
+                                                                                                [
+                                                                                                    "Data",
+                                                                                                    "Ord"
+                                                                                                ],
+                                                                                                {
+                                                                                                    "Ident": "ordInt"
+                                                                                                }
+                                                                                            ]
+                                                                                        ]
+                                                                                    }
+                                                                                ]
+                                                                            },
+                                                                            {
+                                                                                "tag": "Literal",
+                                                                                "contents": [
+                                                                                    [],
+                                                                                    {
+                                                                                        "tag": "NumericLiteral",
+                                                                                        "contents": {
+                                                                                            "Left": 1
+                                                                                        }
+                                                                                    }
+                                                                                ]
+                                                                            }
+                                                                        ]
+                                                                    },
+                                                                    {
+                                                                        "tag": "Var",
+                                                                        "contents": [
+                                                                            [],
+                                                                            [
+                                                                                null,
+                                                                                {
+                                                                                    "Ident": "x"
+                                                                                }
+                                                                            ]
+                                                                        ]
+                                                                    }
+                                                                ]
+                                                            }
+                                                        ]
+                                                    },
+                                                    {
+                                                        "tag": "App",
+                                                        "contents": [
+                                                            [],
+                                                            {
+                                                                "tag": "App",
+                                                                "contents": [
+                                                                    [],
+                                                                    {
+                                                                        "tag": "App",
+                                                                        "contents": [
+                                                                            [],
+                                                                            {
+                                                                                "tag": "Var",
+                                                                                "contents": [
+                                                                                    [],
+                                                                                    [
+                                                                                        [
+                                                                                            "Data",
+                                                                                            "Ord"
+                                                                                        ],
+                                                                                        {
+                                                                                            "Ident": "lessThan"
+                                                                                        }
+                                                                                    ]
+                                                                                ]
+                                                                            },
+                                                                            {
+                                                                                "tag": "Var",
+                                                                                "contents": [
+                                                                                    [],
+                                                                                    [
+                                                                                        [
+                                                                                            "Data",
+                                                                                            "Ord"
+                                                                                        ],
+                                                                                        {
+                                                                                            "Ident": "ordInt"
+                                                                                        }
+                                                                                    ]
+                                                                                ]
+                                                                            }
+                                                                        ]
+                                                                    },
+                                                                    {
+                                                                        "tag": "Var",
+                                                                        "contents": [
+                                                                            [],
+                                                                            [
+                                                                                null,
+                                                                                {
+                                                                                    "Ident": "x"
+                                                                                }
+                                                                            ]
+                                                                        ]
+                                                                    }
+                                                                ]
+                                                            },
+                                                            {
+                                                                "tag": "Literal",
+                                                                "contents": [
+                                                                    [],
+                                                                    {
+                                                                        "tag": "NumericLiteral",
+                                                                        "contents": {
+                                                                            "Left": 4
+                                                                        }
+                                                                    }
+                                                                ]
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            }
+                                        ],
+                                        [
+                                            {
+                                                "caseAlternativeResult": {
+                                                    "Right": {
+                                                        "tag": "App",
+                                                        "contents": [
+                                                            [],
+                                                            {
+                                                                "tag": "Var",
+                                                                "contents": [
+                                                                    [],
+                                                                    [
+                                                                        [
+                                                                            "Main"
+                                                                        ],
+                                                                        {
+                                                                            "Ident": "singleton"
+                                                                        }
+                                                                    ]
+                                                                ]
+                                                            },
+                                                            {
+                                                                "tag": "Var",
+                                                                "contents": [
+                                                                    [],
+                                                                    [
+                                                                        null,
+                                                                        {
+                                                                            "Ident": "x"
+                                                                        }
+                                                                    ]
+                                                                ]
+                                                            }
+                                                        ]
+                                                    }
+                                                },
+                                                "caseAlternativeBinders": [
+                                                    {
+                                                        "tag": "LiteralBinder",
+                                                        "contents": [
+                                                            [],
+                                                            {
+                                                                "tag": "BooleanLiteral",
+                                                                "contents": true
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "caseAlternativeResult": {
+                                                    "Right": {
+                                                        "tag": "Var",
+                                                        "contents": [
+                                                            [],
+                                                            [
+                                                                [
+                                                                    "Main"
+                                                                ],
+                                                                {
+                                                                    "Ident": "empty"
+                                                                }
+                                                            ]
+                                                        ]
+                                                    }
+                                                },
+                                                "caseAlternativeBinders": [
+                                                    {
+                                                        "tag": "NullBinder",
+                                                        "contents": []
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "tag": "Var",
+                    "contents": [
+                        [],
+                        [
+                            null,
+                            {
+                                "Ident": "as"
+                            }
+                        ]
+                    ]
+                }
+            ]
+        }
+    ]
+]
