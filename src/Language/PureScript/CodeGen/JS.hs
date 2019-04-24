@@ -8,6 +8,7 @@ module Language.PureScript.CodeGen.JS
 
 import Prelude.Compat
 import Protolude (ordNub)
+import Debug.Trace (traceM)
 
 import Control.Arrow ((&&&))
 import Control.Monad (forM, replicateM, void)
@@ -25,6 +26,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 
 import Language.PureScript.AST.SourcePos
+import Language.PureScript.Types (arity)
 import Language.PureScript.CodeGen.JS.Common as Common
 import Language.PureScript.CoreImp.AST (AST, everywhereTopDownM, withSourceSpan)
 import qualified Language.PureScript.CoreImp.AST as AST
@@ -50,7 +52,7 @@ moduleToJs
   => Module Ann
   -> Maybe AST
   -> m [AST]
-moduleToJs (Module _ coms mn _ imps exps foreigns decls) foreign_ =
+moduleToJs (Module _ coms mn _ imps exps foreigns decls) foreign_ = do
   rethrow (addHint (ErrorInModule mn)) $ do
     let usedNames = concatMap getNames decls
     let mnLookup = renameImports usedNames imps
@@ -212,13 +214,19 @@ moduleToJs (Module _ coms mn _ imps exps foreigns decls) foreign_ =
     assign :: Ident -> AST
     assign name = AST.Assignment Nothing (accessorString (mkString $ runIdent name) (AST.Var Nothing "this"))
                                (var name)
-  valueToJs' (Abs _ arg val) = do
-    ret <- valueToJs val
-    let jsArg = case arg of
-                  UnusedIdent -> []
-                  _           -> [identToJs arg]
-    return $ AST.Function Nothing Nothing jsArg (AST.Block Nothing [AST.Return Nothing ret])
-  valueToJs' e@App{} = do
+  valueToJs' e@(Abs _ _ _) = do
+    let go params (Abs _ ident body) = go (identToJs ident:params) body
+        go params body = (reverse params,) <$> valueToJs body
+    (params, body) <- go [] e
+    return $ AST.Function Nothing Nothing params (AST.Block Nothing [AST.Return Nothing body])
+
+  -- valueToJs' (Abs _ arg val) = do
+  --   ret <- valueToJs val
+  --   let jsArg = case arg of
+  --                 UnusedIdent -> []
+  --                 _           -> [identToJs arg]
+  --   return $ AST.Function Nothing Nothing jsArg (AST.Block Nothing [AST.Return Nothing ret])
+  valueToJs' e@(App ann _ _) = do
     let (f, args) = unApp e []
     args' <- mapM valueToJs args
     case f of
@@ -227,7 +235,31 @@ moduleToJs (Module _ coms mn _ imps exps foreigns decls) foreign_ =
         return $ AST.Unary Nothing AST.New $ AST.App Nothing (qualifiedToJS id name) args'
       Var (_, _, _, Just IsTypeClassConstructor) name ->
         return $ AST.Unary Nothing AST.New $ AST.App Nothing (qualifiedToJS id name) args'
-      _ -> flip (foldl (\fn a -> AST.App Nothing fn [a])) args' <$> valueToJs f
+      _ -> do
+        func <- valueToJs f
+        let (_, _, mt, _) = extractAnn f
+        case arity <$> mt of
+          Just arity'
+            -- if the number of arguments is equal to the arity, invoke the function directly
+            | arity' == length args' -> do
+              traceM "equal arity"
+              pure $ AST.App Nothing func args'
+            -- if the number of arguments is less than the arity, create a new function
+            -- to pass through the remaining arguments.
+            | arity' > length args' -> do
+              traceM "greater arity"
+              newArgs <- replicateM (arity' - length args) freshName
+              pure $
+                AST.Function Nothing Nothing newArgs $
+                  AST.Return Nothing (AST.App Nothing func (args' <> map (AST.Var Nothing) newArgs))
+            -- if there are more arguments than expected, it means the function must return another function. Apply as many arguments as possible and recur on the rest.
+            | otherwise -> do
+               traceM $ "lesser arity " ++ show (annType ann) ++ " vs " ++ show (length args)
+               let (toApply, remaining) = splitAt arity' args'
+               pure $ AST.App Nothing (AST.App Nothing func toApply) remaining
+
+          _ -> pure $ flip (foldl (\fn a -> AST.App Nothing fn [a])) args' func
+
     where
     unApp :: Expr Ann -> [Expr Ann] -> (Expr Ann, [Expr Ann])
     unApp (App _ val arg) args = unApp val (arg : args)

@@ -54,6 +54,11 @@ data Expr a
   | Let a [Bind a] (Expr a)
   deriving (Show, Functor)
 
+-- arity :: Expr a -> Int
+-- arity = \case
+--   Abs _ _ e -> 1 + arity e
+--   _ -> 0
+
 -- |
 -- A let or module binding.
 --

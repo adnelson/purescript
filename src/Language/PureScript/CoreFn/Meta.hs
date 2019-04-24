@@ -31,6 +31,9 @@ data Meta
   -- The contained value is a where clause
   --
   | IsWhere
+  -- |
+  -- Is a function with these parameters
+  | IsFunctionWithParams [Ident]
   deriving (Show, Eq, Ord)
 
 -- |

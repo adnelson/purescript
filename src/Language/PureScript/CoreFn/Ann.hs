@@ -10,7 +10,10 @@ import Language.PureScript.Types
 -- |
 -- Type alias for basic annotations
 --
-type Ann = (SourceSpan, [Comment], Maybe SourceType, Maybe Meta)
+type Ann = (SourceSpan, [Comment], Maybe SourceType {- Type (Maybe SourceAnn) -}, Maybe Meta)
+
+annType :: Ann -> Maybe SourceType
+annType (_, _, t, _) = t
 
 -- |
 -- An annotation empty of metadata aside from a source span.

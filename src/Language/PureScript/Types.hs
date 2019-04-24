@@ -64,6 +64,7 @@ data Type a
   -- | A type operator. This will be desugared into a type constructor during the
   -- "operators" phase of desugaring.
   | TypeOp a (Qualified (OpName 'TypeOpName))
+  -- TypeOp a (Qualified
   -- | A type application
   | TypeApp a (Type a) (Type a)
   -- | Forall quantifier
@@ -90,6 +91,19 @@ data Type a
   deriving (Show, Generic, Functor, Foldable, Traversable)
 
 instance NFData a => NFData (Type a)
+
+-- Get the arity of a type.
+arity :: Type a -> Int
+arity = \case
+  -- This monstrosity will match against a function type.
+  TypeApp _
+    (TypeApp _
+      (TypeConstructor _
+        (Qualified (Just (ModuleName [ProperName "Prim"]))
+          (ProperName "Function"))) _) t -> 1 + arity t
+  -- If it's not a function type, it has 0 arity.
+  _ -> 0
+
 
 srcTUnknown :: Int -> SourceType
 srcTUnknown = TUnknown NullSourceAnn
