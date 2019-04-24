@@ -84,10 +84,16 @@ reduceBind bind = do
     NonRec a ident expr -> NonRec (R a) ident <$> do
       -- Evaluate the inner expression with the same scope as outer.
       withTrace ("nonrec binding of " ++ show ident) $ reduce_ expr
-    Rec bindings -> do
+    Rec bindings -> withNewScope $ do
       -- TODO this will fail if not defined in dependency order.
-      forM bindings $ \((ann, ident), expr) -> do
+      bindings' <- fmap M.fromList $ forM_ bindings $ \((ann, ident), expr) -> do
         reduced <- reduce_ expr
+        pure (ident, reduced)
+        -- add the new ident to the current scope
+        addToScope ident expr
+
+
+
 
 
       let go [] reducedBindings = pure $ Rec $ reducedBindings
