@@ -1,6 +1,7 @@
 -- |
 -- The core functional representation for binders
 --
+{-# LANGUAGE DeriveFoldable, DeriveTraversable #-}
 module Language.PureScript.CoreFn.Binders where
 
 import Prelude.Compat
@@ -31,7 +32,7 @@ data Binder a
   -- |
   -- A binder which binds its input to an identifier
   --
-  | NamedBinder a Ident (Binder a) deriving (Show, Functor)
+  | NamedBinder a Ident (Binder a) deriving (Show, Functor, Foldable, Traversable)
 
 
 extractBinderAnn :: Binder a -> a

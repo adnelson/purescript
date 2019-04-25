@@ -33,7 +33,7 @@ data Meta
   | IsWhere
   -- |
   -- Is a function with these parameters
-  | IsFunctionWithParams [Ident]
+--  | IsFunctionWithParams [Ident]
   deriving (Show, Eq, Ord)
 
 -- |

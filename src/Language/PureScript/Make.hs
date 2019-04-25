@@ -49,7 +49,7 @@ import           System.FilePath (replaceExtension)
 -- This function is used for fast-rebuild workflows (PSCi and psc-ide are examples).
 rebuildModule
   :: forall m
-   . (Monad m, MonadBaseControl IO m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+   . (Monad m, MonadIO m, MonadBaseControl IO m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
   => MakeActions m
   -> [ExternsFile]
   -> Module
@@ -59,9 +59,11 @@ rebuildModule MakeActions{..} externs m@(Module _ _ moduleName _ _) = do
   let env = foldl' (flip applyExternsFileToEnvironment) initEnvironment externs
       withPrim = importPrim m
   lint withPrim
-  ((Module ss coms _ elaborated exps, env'), nextVar) <- runSupplyT 0 $ do
+  ((mod@(Module ss coms _ elaborated exps), env'), nextVar) <- runSupplyT 0 $ do
     [desugared] <- desugar externs [withPrim]
     runCheck' (emptyCheckState env) $ typeCheckModule desugared
+
+--  _what
 
   -- desugar case declarations *after* type- and exhaustiveness checking
   -- since pattern guards introduces cases which the exhaustiveness checker
@@ -75,15 +77,20 @@ rebuildModule MakeActions{..} externs m@(Module _ _ moduleName _ _) = do
       optimized = CF.optimizeCoreFn corefn
       [renamed] = renameInModules [optimized]
       exts = moduleToExternsFile mod' env'
-  ffiCodegen renamed
-  evalSupplyT nextVar' . codegen renamed env' . encode $ exts
-  return exts
+
+  case CF.moduleToFullyAnnotated corefn of
+    Nothing -> error $ "couldn't fully annotate tree " ++ show corefn
+    Just _ -> do
+      liftIO $ putStrLn "fully annotated!!"
+      ffiCodegen renamed
+      evalSupplyT nextVar' . codegen renamed env' . encode $ exts
+      return exts
 
 -- | Compiles in "make" mode, compiling each module separately to a @.js@ file and an @externs.json@ file.
 --
 -- If timestamps have not changed, the externs file can be used to provide the module's types without
 -- having to typecheck the module again.
-make :: forall m. (Monad m, MonadBaseControl IO m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+make :: forall m. (Monad m, MonadIO m, MonadBaseControl IO m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
      => MakeActions m
      -> [Module]
      -> m [ExternsFile]

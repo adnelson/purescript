@@ -1,9 +1,10 @@
-module Language.PureScript.CoreFn.Desugar (moduleToCoreFn) where
+module Language.PureScript.CoreFn.Desugar (moduleToCoreFn, moduleToFullyAnnotated) where
 
 import Prelude.Compat
 import Protolude (ordNub)
 
 import Control.Arrow (second)
+import Control.Monad (forM)
 
 import Data.Function (on)
 import Data.List (sort, sortBy)
@@ -11,6 +12,7 @@ import Data.Maybe (mapMaybe)
 import Data.Tuple (swap)
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as M
+import Debug.Trace (traceM)
 
 import Language.PureScript.AST.Literals
 import Language.PureScript.AST.SourcePos
@@ -28,6 +30,78 @@ import Language.PureScript.Sugar.TypeClasses (typeClassMemberName, superClassDic
 import Language.PureScript.Types
 import Language.PureScript.PSString (mkString)
 import qualified Language.PureScript.AST as A
+
+data Ann' = Ann' SourceSpan [Comment] (Maybe Meta) SourceType
+  deriving (Show, Eq)
+
+toFullyAnnotated :: Ann -> Maybe Ann'
+toFullyAnnotated (ss, cs, st, meta) = do
+  traceM "hey!"
+  Ann' ss cs meta <$> st
+
+exprToFullyAnnotated :: Expr Ann -> Maybe (Expr Ann')
+exprToFullyAnnotated e = case exprToFullyAnnotated' e of
+  Nothing -> do
+    traceM ("expression " ++ show e ++ " has no annotation")
+    Nothing
+  Just e' -> pure e'
+
+
+exprToFullyAnnotated' :: Expr Ann -> Maybe (Expr Ann')
+exprToFullyAnnotated' = \case
+  Literal a lit -> do
+    Literal <$> toFullyAnnotated a <*> mapM exprToFullyAnnotated lit
+  Constructor a tname cname idents -> do
+    a' <- toFullyAnnotated a
+    pure $ Constructor a' tname cname idents
+  Accessor a field e -> do
+    a' <- toFullyAnnotated a
+    e' <- exprToFullyAnnotated e
+    pure $ Accessor a' field e'
+  ObjectUpdate a e updates -> do
+    a' <- toFullyAnnotated a
+    e' <- exprToFullyAnnotated e
+    updates' <- forM updates $ \(f, e'') -> (f,) <$> exprToFullyAnnotated e''
+    pure $ ObjectUpdate a' e' updates'
+  Abs a ident e -> do
+    a' <- toFullyAnnotated a
+    e' <- exprToFullyAnnotated e
+    pure $ Abs a' ident e'
+  App a e e' -> App <$> toFullyAnnotated a <*> exprToFullyAnnotated e <*> exprToFullyAnnotated e'
+  Var a ident -> flip Var ident <$> toFullyAnnotated a
+  Case a exprs alts -> do
+    a' <- toFullyAnnotated a
+    exprs' <- mapM exprToFullyAnnotated exprs
+    alts' <- forM alts $ \(CaseAlternative binders result) -> do
+      binders' <- mapM (traverse toFullyAnnotated) binders
+      result' <- case result of
+        Left guardsAndExprs -> do
+          fmap Left $ forM guardsAndExprs $ \(g, e) -> do
+            (,) <$> exprToFullyAnnotated g <*> exprToFullyAnnotated e
+        Right expr -> Right <$> exprToFullyAnnotated expr
+      pure $ CaseAlternative binders' result'
+    pure $ Case a' exprs' alts'
+  Let a binds expr -> do
+    a' <- toFullyAnnotated a
+    binds' <- forM binds bindToFullyAnnotated
+    expr' <- exprToFullyAnnotated expr
+    pure $ Let a' binds' expr'
+
+bindToFullyAnnotated :: Bind Ann -> Maybe (Bind Ann')
+bindToFullyAnnotated = \case
+  NonRec a ident e -> do
+    flip NonRec ident <$> toFullyAnnotated a <*> exprToFullyAnnotated e
+  Rec group -> fmap Rec $ forM group $ \((a, ident), e) -> do
+    a' <- toFullyAnnotated a
+    e' <- exprToFullyAnnotated e
+    pure ((a', ident), e')
+
+moduleToFullyAnnotated :: Module Ann -> Maybe (Module Ann')
+moduleToFullyAnnotated mod = do
+  decls' <- forM (moduleDecls mod) bindToFullyAnnotated
+  imports' <- forM (moduleImports mod) $ \(a, name) ->
+    (, name) <$> toFullyAnnotated a
+  pure mod { moduleDecls = decls', moduleImports = imports' }
 
 -- | Desugars a module from AST to CoreFn representation.
 moduleToCoreFn :: Environment -> A.Module -> Module Ann
@@ -79,6 +153,8 @@ moduleToCoreFn env (A.Module modSS coms mn decls (Just exps)) =
     Accessor (ss, com, ty, Nothing) name (exprToCoreFn ss [] Nothing v)
   exprToCoreFn ss com ty (A.ObjectUpdate obj vs) =
     ObjectUpdate (ss, com, ty, Nothing) (exprToCoreFn ss [] Nothing obj) $ fmap (second (exprToCoreFn ss [] Nothing)) vs
+  exprToCoreFn ss com ty e@(A.Abs (A.VarBinder _ name) v) = do
+    Abs (ss, com, ty, Nothing) name (exprToCoreFn ss [] Nothing v)
   exprToCoreFn ss com ty (A.Abs (A.VarBinder _ name) v) =
     Abs (ss, com, ty, Nothing) name (exprToCoreFn ss [] Nothing v)
   exprToCoreFn _ _ _ (A.Abs _ _) =

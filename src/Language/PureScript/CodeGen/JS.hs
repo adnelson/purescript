@@ -251,14 +251,16 @@ moduleToJs (Module _ coms mn _ imps exps foreigns decls) foreign_ = do
               newArgs <- replicateM (arity' - length args) freshName
               pure $
                 AST.Function Nothing Nothing newArgs $
-                  AST.Return Nothing (AST.App Nothing func (args' <> map (AST.Var Nothing) newArgs))
+                  AST.Return Nothing $
+                    AST.App Nothing func (args' <> map (AST.Var Nothing) newArgs)
             -- if there are more arguments than expected, it means the function must return another function. Apply as many arguments as possible and recur on the rest.
             | otherwise -> do
                traceM $ "lesser arity " ++ show (annType ann) ++ " vs " ++ show (length args)
                let (toApply, remaining) = splitAt arity' args'
                pure $ AST.App Nothing (AST.App Nothing func toApply) remaining
 
-          _ -> pure $ flip (foldl (\fn a -> AST.App Nothing fn [a])) args' func
+          _ -> do
+            pure $ flip (foldl (\fn a -> AST.App Nothing fn [a])) args' func
 
     where
     unApp :: Expr Ann -> [Expr Ann] -> (Expr Ann, [Expr Ann])

@@ -22,4 +22,4 @@ data Module a = Module
   , moduleExports :: [Ident]
   , moduleForeign :: [Ident]
   , moduleDecls :: [Bind a]
-  } deriving (Show)
+  } deriving (Show, Functor)

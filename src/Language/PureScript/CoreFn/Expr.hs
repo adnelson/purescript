@@ -1,6 +1,7 @@
 -- |
 -- The core functional representation
 --
+{-# LANGUAGE DeriveFoldable, DeriveTraversable #-}
 module Language.PureScript.CoreFn.Expr where
 
 import Prelude.Compat
@@ -96,6 +97,21 @@ instance Functor CaseAlternative where
   fmap f (CaseAlternative cabs car) = CaseAlternative
     (fmap (fmap f) cabs)
     (either (Left . fmap (fmap f *** fmap f)) (Right . fmap f) car)
+
+{-
+instance Foldable CaseAlternative where
+  foldMap f (CaseAlternative binders result) = do
+    let binders' = foldMap f binders
+    let result' = flip foldMap result $ \case
+          Left (guard, expr) -> foldMap f guard <> foldMap f expr
+          Right expr -> foldMap f expr
+    binders' <> result'
+
+instance Traversable CaseAlternative where
+  traverse :: Applicative f => (a -> f b) -> t a -> f (t b)
+  traverse f (CaseAlternative binders result) = do
+    _what
+-}
 
 -- |
 -- Extract the annotation from a term
