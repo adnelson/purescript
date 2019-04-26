@@ -16,7 +16,9 @@ import qualified Data.Text as T
 import System.FilePath (makeRelative)
 
 -- | Source annotation - position information and comments.
-type SourceAnn = (SourceSpan, [Comment])
+type SourceAnn' a = (a, [Comment])
+type SourceAnn = SourceAnn' SourceSpan
+
 
 -- | Source position information
 data SourcePos = SourcePos

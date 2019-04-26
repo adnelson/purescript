@@ -351,14 +351,19 @@ entails SolverOptions{..} constraint context hints =
               -- This means that it doesn't have a definition that we can import.
               -- So pass an empty placeholder (undefined) instead.
               return (useEmptyDict args)
-            mkDictionary (IsSymbolInstance sym) _ =
-              let fields = [ ("reflectSymbol", Abs (VarBinder nullSourceSpan UnusedIdent) (Literal nullSourceSpan (StringLiteral sym))) ] in
-              return $ TypeClassDictionaryConstructorApp C.IsSymbol (Literal nullSourceSpan (ObjectLiteral fields))
+            mkDictionary (IsSymbolInstance sym) _ = do
+              let
+                param = VarBinder nullSourceSpan UnusedIdent
+                body = withNullSource (Literal (StringLiteral sym))
+                fields = [("reflectSymbol", withNullSource (Abs param body))]
+                obj = withNullSource $ Literal (ObjectLiteral fields)
+              return $ withNullSource $ TypeClassDictionaryConstructorApp C.IsSymbol obj
 
         -- Turn a DictionaryValue into a Expr
         subclassDictionaryValue :: Expr -> Qualified (ProperName 'ClassName) -> Integer -> Expr
-        subclassDictionaryValue dict className index =
-          App (Accessor (mkString (superclassName className index)) dict) valUndefined
+        subclassDictionaryValue dict@(AnnExpr a e) className index = do
+          let accessor = Accessor (mkString (superclassName className index)) dict
+          AnnExpr a $ App (AnnExpr a accessor) valUndefined
 
     solveIsSymbol :: [SourceType] -> Maybe [TypeClassDict]
     solveIsSymbol [TypeLevelString ann sym] = Just [TypeClassDictionaryInScope [] 0 (IsSymbolInstance sym) [] C.IsSymbol [TypeLevelString ann sym] Nothing]

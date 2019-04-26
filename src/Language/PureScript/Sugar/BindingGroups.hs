@@ -66,7 +66,7 @@ createBindingGroups moduleName = mapM f <=< handleDecls
   --
   handleDecls :: [Declaration] -> m [Declaration]
   handleDecls ds = do
-    let values = mapMaybe (fmap (fmap extractGuardedExpr) . getValueDeclaration) ds
+    let values :: [ValueDeclarationData' Expr SourceSpan] = undefined -- mapMaybe (fmap (fmap extractGuardedExpr) . getValueDeclaration) ds
         dataDecls = filter isDataDecl ds
         allProperNames = fmap declTypeName dataDecls
         dataVerts = fmap (\d -> (d, declTypeName d, usedTypeNames moduleName d `intersect` allProperNames)) dataDecls
@@ -205,8 +205,9 @@ isTypeSynonym :: Declaration -> Maybe (ProperName 'TypeName)
 isTypeSynonym (TypeSynonymDeclaration _ pn _ _) = Just pn
 isTypeSynonym _ = Nothing
 
-mkDeclaration :: ValueDeclarationData Expr -> Declaration
-mkDeclaration = ValueDeclaration . fmap (pure . MkUnguarded)
+mkDeclaration :: ValueDeclarationData' Expr SourceSpan -> Declaration
+mkDeclaration (ValueDeclarationData a i n bs e) = ValueDeclaration $
+  ExprValueDeclaration $ ValueDeclarationData a i n bs [MkUnguarded e]
 
 fromValueDecl :: ValueDeclarationData Expr -> ((SourceAnn, Ident), NameKind, Expr)
 fromValueDecl (ValueDeclarationData sa ident nameKind [] val) = ((sa, ident), nameKind, val)

@@ -5,14 +5,14 @@
 module Language.PureScript.AST.Binders where
 
 import Prelude.Compat
+import Control.Monad.Identity (runIdentity)
+import Lens.Micro.Platform
 
 import Language.PureScript.AST.SourcePos
 import Language.PureScript.AST.Literals
 import Language.PureScript.Names
 import Language.PureScript.Comments
 import Language.PureScript.Types
-
-type Binder = Binder' SourceSpan
 
 -- |
 -- Data type for binders

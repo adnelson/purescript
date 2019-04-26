@@ -339,7 +339,7 @@ desugarCases = desugarRest <=< fmap join . flip parU toDecls . groupBy inSameGro
     desugarRest [] = pure []
 
 inSameGroup :: Declaration -> Declaration -> Bool
-inSameGroup (ValueDeclaration vd1) (ValueDeclaration vd2) = valdeclIdent vd1 == valdeclIdent vd2
+inSameGroup (ValueDeclaration (ExprValueDeclaration vd1)) (ValueDeclaration (ExprValueDeclaration vd2)) = valdeclIdent vd1 == valdeclIdent vd2
 inSameGroup _ _ = False
 
 toDecls :: forall m. (MonadSupply m, MonadError MultipleErrors m) => [Declaration] -> m [Declaration]
