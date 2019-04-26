@@ -324,17 +324,15 @@ infer
   :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
   => Expr
   -> m TypedValue'
-infer val = withErrorMessageHint (ErrorInferringType val) $ unwrapTypedExpr <$> infer' val
+infer val = withErrorMessageHint (ErrorInferringType val) $ infer' val
 
 -- | Infer a type for a value
 infer'
   :: forall m
    . (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
   => Expr
-  -> m TypedExpr
-infer' v@(Literal sspan (NumericLiteral (Left _))) =
-  return $ TypedExpr True sspan tyInt (Literal _a _b)
-{-
+  -> m TypedValue'
+infer' v@(Literal sspan (NumericLiteral (Left _))) = return $ TypedValue' True v tyInt
 infer' v@(Literal _ (NumericLiteral (Right _))) = return $ TypedValue' True v tyNumber
 infer' v@(Literal _ (StringLiteral _)) = return $ TypedValue' True v tyString
 infer' v@(Literal _ (CharLiteral _)) = return $ TypedValue' True v tyChar
@@ -452,7 +450,6 @@ infer' (PositionedValue pos c val) = warnAndRethrowWithPositionTC pos $ do
   TypedValue' t v ty <- infer' val
   return $ TypedValue' t (PositionedValue pos c v) ty
 infer' v = internalError $ "Invalid argument to infer: " ++ show v
--}
 
 
 inferLetBinding
