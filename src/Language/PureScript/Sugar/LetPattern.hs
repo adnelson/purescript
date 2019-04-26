@@ -24,7 +24,7 @@ desugarLetPattern decl =
   in f decl
   where
   replace :: Expr -> Expr
-  replace (Let w ds e) = go w (partitionDecls ds) e
+  replace (Let w _ ds e) = go w (partitionDecls ds) e
   replace other = other
 
   go :: WhereProvenance
@@ -35,9 +35,10 @@ desugarLetPattern decl =
      -- ^ The original let-in result expression
      -> Expr
   go _ [] e = e
-  go w (Right ((pos, com), binder, boundE) : ds) e =
-    PositionedValue pos com $ Case [boundE] [CaseAlternative [binder] [MkUnguarded $ go w ds e]]
-  go w (Left ds:dss) e = Let w ds (go w dss e)
+  go w (Right ((a, com), binder, boundE) : ds) e =
+    PositionedValue a com $
+      Case a [boundE] [CaseAlternative [binder] [MkUnguarded $ go w ds e]]
+  go w (Left ds:dss) e = Let w _a ds (go w dss e)
 
 partitionDecls :: [Declaration] -> [Either [Declaration] (SourceAnn, Binder, Expr)]
 partitionDecls = concatMap f . groupBy ((==) `on` isBoundValueDeclaration)

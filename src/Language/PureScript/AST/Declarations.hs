@@ -726,7 +726,7 @@ data Expr' a
   -- Binary operator application. During the rebracketing phase of desugaring, this data constructor
   -- will be removed.
   --
-  | BinaryNoParens (Expr' a) (Expr' a) (Expr' a)
+  | BinaryNoParens a (Expr' a) (Expr' a) (Expr' a)
   -- |
   -- Explicit parentheses. During the rebracketing phase of desugaring, this data constructor
   -- will be removed.
@@ -740,24 +740,24 @@ data Expr' a
   -- Anonymous arguments will be removed during desugaring and expanded
   -- into a lambda that reads a property from a record.
   --
-  | Accessor PSString (Expr' a)
+  | Accessor a PSString (Expr' a)
   -- |
   -- Partial record update
   --
-  | ObjectUpdate (Expr' a) [(PSString, Expr' a)]
+  | ObjectUpdate a (Expr' a) [(PSString, Expr' a)]
   -- |
   -- Object updates with nested support: `x { foo { bar = e } }`
   -- Replaced during desugaring into a `Let` and nested `ObjectUpdate`s
   --
-  | ObjectUpdateNested (Expr' a) (PathTree (Expr' a))
+  | ObjectUpdateNested a (Expr' a) (PathTree (Expr' a))
   -- |
   -- Function introduction
   --
-  | Abs (Binder' a) (Expr' a)
+  | Abs a (Binder' a) (Expr' a)
   -- |
   -- Function application
   --
-  | App (Expr' a) (Expr' a)
+  | App a (Expr' a) (Expr' a)
   -- |
   -- Variable
   --
@@ -770,7 +770,7 @@ data Expr' a
   -- |
   -- Conditional (if-then-else expression)
   --
-  | IfThenElse (Expr' a) (Expr' a) (Expr' a)
+  | IfThenElse a (Expr' a) (Expr' a) (Expr' a)
   -- |
   -- A data constructor
   --
@@ -779,28 +779,28 @@ data Expr' a
   -- A case expression. During the case expansion phase of desugaring, top-level binders will get
   -- desugared into case expressions, hence the need for guards and multiple binders per branch here.
   --
-  | Case [(Expr' a)] [CaseAlternative' a]
+  | Case a [(Expr' a)] [CaseAlternative' a]
   -- |
   -- A value with a type annotation
   --
-  | TypedValue Bool (Expr' a) SourceType
+  | TypedValue a Bool (Expr' a) SourceType
   -- |
   -- A let binding
   --
-  | Let WhereProvenance [Declaration' a] (Expr' a)
+  | Let WhereProvenance a [Declaration' a] (Expr' a)
   -- |
   -- A do-notation block
   --
-  | Do (Maybe ModuleName) [DoNotationElement' a]
+  | Do a (Maybe ModuleName) [DoNotationElement' a]
   -- |
   -- An ado-notation block
   --
-  | Ado (Maybe ModuleName) [DoNotationElement' a] (Expr' a)
+  | Ado a (Maybe ModuleName) [DoNotationElement' a] (Expr' a)
   -- |
   -- An application of a typeclass dictionary constructor. The value should be
   -- an ObjectLiteral.
   --
-  | TypeClassDictionaryConstructorApp (Qualified (ProperName 'ClassName)) (Expr' a)
+  | TypeClassDictionaryConstructorApp a (Qualified (ProperName 'ClassName)) (Expr' a)
   -- |
   -- A placeholder for a type class dictionary to be inserted later. At the end of type checking, these
   -- placeholders will be replaced with actual expressions representing type classes dictionaries which
@@ -808,25 +808,25 @@ data Expr' a
   -- at superclass implementations when searching for a dictionary, the type class name and
   -- instance type, and the type class dictionaries in scope.
   --
-  | TypeClassDictionary SourceConstraint
+  | TypeClassDictionary a SourceConstraint
                         (M.Map (Maybe ModuleName) (M.Map (Qualified (ProperName 'ClassName)) (M.Map (Qualified Ident) (NEL.NonEmpty NamedDict))))
                         [ErrorMessageHint' a]
   -- |
   -- A typeclass dictionary accessor, the implementation is left unspecified until CoreFn desugaring.
   --
-  | TypeClassDictionaryAccessor (Qualified (ProperName 'ClassName)) Ident
+  | TypeClassDictionaryAccessor a (Qualified (ProperName 'ClassName)) Ident
   -- |
   -- A placeholder for a superclass dictionary to be turned into a TypeClassDictionary during typechecking
   --
-  | DeferredDictionary (Qualified (ProperName 'ClassName)) [SourceType]
+  | DeferredDictionary a (Qualified (ProperName 'ClassName)) [SourceType]
   -- |
   -- A placeholder for an anonymous function argument
   --
-  | AnonymousArgument
+  | AnonymousArgument a
   -- |
   -- A typed hole that will be turned into a hint/error during typechecking
   --
-  | Hole Text
+  | Hole a Text
   -- |
   -- A value with source position information
   --
@@ -924,6 +924,34 @@ isTrueExpr :: Expr' a -> Bool
 isTrueExpr (Literal _ (BooleanLiteral True)) = True
 isTrueExpr (Var _ (Qualified (Just (ModuleName [ProperName "Prelude"])) (Ident "otherwise"))) = True
 isTrueExpr (Var _ (Qualified (Just (ModuleName [ProperName "Data", ProperName "Boolean"])) (Ident "otherwise"))) = True
-isTrueExpr (TypedValue _ e _) = isTrueExpr e
+isTrueExpr (TypedValue _ _ e _) = isTrueExpr e
 isTrueExpr (PositionedValue _ _ e) = isTrueExpr e
 isTrueExpr _ = False
+
+getAnnotation :: Expr' a -> a
+getAnnotation = \case
+  Literal a _ -> a
+  UnaryMinus a _ -> a
+  BinaryNoParens a _ _ _ -> a
+  Parens e -> getAnnotation e
+  Accessor a _ _ -> a
+  ObjectUpdate a _ _ -> a
+  ObjectUpdateNested a _ _ -> a
+  Abs a _ _ -> a
+  App a _ _ -> a
+  Var a _ -> a
+  Op a _ -> a
+  IfThenElse a _ _ _ -> a
+  Constructor a _ -> a
+  Case a _ _ -> a
+  TypedValue a _ _ _ -> a
+  Let _ a _ _ -> a
+  Do a _ _ -> a
+  Ado a _ _ _ -> a
+  TypeClassDictionaryConstructorApp a _ _ -> a
+  TypeClassDictionary a _ _ _ -> a
+  TypeClassDictionaryAccessor a _ _ -> a
+  DeferredDictionary a _ _ -> a
+  AnonymousArgument a -> a
+  Hole a _ -> a
+  PositionedValue a _ _ -> a

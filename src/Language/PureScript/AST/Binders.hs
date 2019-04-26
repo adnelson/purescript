@@ -63,7 +63,7 @@ data Binder' a
   -- |
   -- A binder with a type annotation
   --
-  | TypedBinder SourceType (Binder' a)
+  | TypedBinder a SourceType (Binder' a)
   deriving (Show, Functor, Foldable, Traversable)
 
 -- Manual Eq and Ord instances for `Binder` were added on 2018-03-05. Comparing
@@ -107,7 +107,7 @@ instance Eq (Binder' a) where
     (==) comments comments' && (==) b b'
   (==) PositionedBinder{} _ = False
 
-  (==) (TypedBinder ty b) (TypedBinder ty' b') =
+  (==) (TypedBinder _ ty b) (TypedBinder _ ty' b') =
     (==) ty ty' && (==) b b'
   (==) TypedBinder{} _ = False
 
@@ -165,7 +165,7 @@ instance Ord (Binder' a) where
   compare PositionedBinder{} TypedBinder{} = LT
   compare PositionedBinder{} _ = GT
 
-  compare (TypedBinder ty b) (TypedBinder ty' b') =
+  compare (TypedBinder _ ty b) (TypedBinder _ ty' b') =
     compare ty ty' <> compare b b'
   compare TypedBinder{} _ = GT
 
@@ -182,7 +182,7 @@ binderNames = go []
   go ns (ParensInBinder b) = go ns b
   go ns (NamedBinder _ name b) = go (name : ns) b
   go ns (PositionedBinder _ _ b) = go ns b
-  go ns (TypedBinder _ b) = go ns b
+  go ns (TypedBinder _ _ b) = go ns b
   go ns _ = ns
   lit ns (ObjectLiteral bs) = foldl go ns (map snd bs)
   lit ns (ArrayLiteral bs) = foldl go ns bs
@@ -192,5 +192,5 @@ isIrrefutable :: Binder' a -> Bool
 isIrrefutable NullBinder = True
 isIrrefutable (VarBinder _ _) = True
 isIrrefutable (PositionedBinder _ _ b) = isIrrefutable b
-isIrrefutable (TypedBinder _ b) = isIrrefutable b
+isIrrefutable (TypedBinder _ _ b) = isIrrefutable b
 isIrrefutable _ = False
