@@ -38,19 +38,21 @@ import qualified Language.PureScript.Constants as C
 
 import qualified Text.Parsec as P
 
--- * Monomorphic types, including source annotations
-type Expr = Expr' SourceSpan
-type CaseAlternative = CaseAlternative' SourceSpan
-type DoNotationElement = DoNotationElement' SourceSpan
-type Declaration = Declaration' SourceSpan
-type GuardedExpr = GuardedExpr' SourceSpan
+-- * Monomorphic types, which refer to expressions tagged with source locations
+type Expr = AnnExpr SourceSpan
+type Expr' = AbstractExpr Expr
+type Binder = Binder' Expr
+type CaseAlternative = CaseAlternative' Expr
+type DoNotationElement = DoNotationElement' Expr
+type Declaration = Declaration' Expr
+type GuardedExpr = Guarded' Expr
 type Guard = Guard' SourceSpan
-type Module = Module' SourceSpan
-type ValueDeclarationData e = ValueDeclarationData' e SourceSpan
-type TypeInstanceBody = TypeInstanceBody' SourceSpan
-type ErrorMessage = ErrorMessage' SourceSpan
-type SimpleErrorMessage = SimpleErrorMessage' SourceSpan
-type ErrorMessageHint = ErrorMessageHint' SourceSpan
+type Module = Module' Expr
+type ValueDeclarationData e = ValueDeclarationData' e Expr
+type TypeInstanceBody = TypeInstanceBody' Expr
+type ErrorMessage = ErrorMessage' Expr
+type SimpleErrorMessage = SimpleErrorMessage' Expr
+type ErrorMessageHint = ErrorMessageHint' Expr
 
 -- | A map of locally-bound names in scope.
 type Context = [(Ident, SourceType)]
@@ -135,7 +137,7 @@ data SimpleErrorMessage' a
   | MissingNewtypeSuperclassInstance (Qualified (ProperName 'ClassName)) (Qualified (ProperName 'ClassName)) [SourceType]
   | UnverifiableSuperclassInstance (Qualified (ProperName 'ClassName)) (Qualified (ProperName 'ClassName)) [SourceType]
   | CannotFindDerivingType (ProperName 'TypeName)
-  | DuplicateLabel Label (Maybe (Expr' a))
+  | DuplicateLabel Label (Maybe a)
   | DuplicateValueDeclaration Ident
   | ArgListLengthsDiffer Ident
   | OverlappingArgNames (Maybe Ident)
@@ -144,7 +146,7 @@ data SimpleErrorMessage' a
   | ExpectedType SourceType SourceKind
   -- | constructor name, expected argument count, actual argument count
   | IncorrectConstructorArity (Qualified (ProperName 'ConstructorName)) Int Int
-  | ExprDoesNotHaveType (Expr' a) SourceType
+  | ExprDoesNotHaveType a SourceType
   | PropertyIsMissing Label
   | AdditionalProperty Label
   | TypeSynonymInstance
@@ -197,16 +199,16 @@ data SimpleErrorMessage' a
 -- | Error message hints, providing more detailed information about failure.
 data ErrorMessageHint' a
   = ErrorUnifyingTypes SourceType SourceType
-  | ErrorInExpression (Expr' a)
+  | ErrorInExpression a
   | ErrorInModule ModuleName
   | ErrorInInstance (Qualified (ProperName 'ClassName)) [SourceType]
   | ErrorInSubsumption SourceType SourceType
-  | ErrorCheckingAccessor (Expr' a) PSString
-  | ErrorCheckingType (Expr' a) SourceType
+  | ErrorCheckingAccessor a PSString
+  | ErrorCheckingType a SourceType
   | ErrorCheckingKind SourceType
   | ErrorCheckingGuard
-  | ErrorInferringType (Expr' a)
-  | ErrorInApplication (Expr' a) SourceType (Expr' a)
+  | ErrorInferringType a
+  | ErrorInApplication a SourceType a
   | ErrorInDataConstructor (ProperName 'ConstructorName)
   | ErrorInTypeConstructor (ProperName 'TypeName)
   | ErrorInBindingGroup (NEL.NonEmpty Ident)
@@ -476,14 +478,11 @@ data ValueDeclarationData' expr a = ValueDeclarationData
   , valdeclExpression :: !expr
   } deriving (Show, Functor, Foldable, Traversable)
 
-overValueDeclaration :: (ValueDeclarationData' [GuardedExpr' a] a -> ValueDeclarationData' [GuardedExpr' a] a) -> Declaration' a -> Declaration' a
-overValueDeclaration f d = maybe d (ValueDeclaration . ExprValueDeclaration . f) (getValueDeclaration d)
+instance (HasBinders e, HasBinders a) => HasBinders (ValueDeclarationData' e a) where
+  changeBindersM f (ValueDeclarationData a i n binders expr) =
+    ValueDeclarationData a i n <$> mapM f binders <*> changeBindersM f expr
 
-getValueDeclaration :: Declaration' a -> Maybe (ValueDeclarationData' [GuardedExpr' a] a)
-getValueDeclaration (ValueDeclaration (ExprValueDeclaration d)) = Just d
-getValueDeclaration _ = Nothing
-
-pattern ValueDecl :: SourceAnn -> Ident -> NameKind -> [Binder' a] -> [GuardedExpr' a] -> Declaration' a
+pattern ValueDecl :: SourceAnn -> Ident -> NameKind -> [Binder' a] -> [Guarded' a] -> Declaration' a
 pattern ValueDecl sann ident name binders expr
   = ValueDeclaration (ExprValueDeclaration (ValueDeclarationData sann ident name binders expr))
 
@@ -513,11 +512,11 @@ data Declaration' a
   | ValueDeclaration {-# UNPACK #-} !(ExprValueDeclaration a)
   -- |
   -- A declaration paired with pattern matching in let-in expression (binder, optional guard, value)
-  | BoundValueDeclaration SourceAnn (Binder' a) (Expr' a)
+  | BoundValueDeclaration SourceAnn (Binder' a) a
   -- |
   -- A minimal mutually recursive set of value declarations
   --
-  | BindingGroupDeclaration (NEL.NonEmpty ((SourceAnn, Ident), NameKind, (Expr' a)))
+  | BindingGroupDeclaration (NEL.NonEmpty ((SourceAnn, Ident), NameKind, a))
   -- |
   -- A foreign import declaration (name, type)
   --
@@ -549,6 +548,11 @@ data Declaration' a
   | TypeInstanceDeclaration SourceAnn [Ident] Integer Ident [SourceConstraint] (Qualified (ProperName 'ClassName)) [SourceType] (TypeInstanceBody' a)
   deriving (Show, Functor, Foldable, Traversable)
 
+instance HasBinders a => HasBinders (Declaration' a) where
+  changeBindersM f (BoundValueDeclaration ann binder a) =
+    BoundValueDeclaration ann <$> f binder <*> changeBindersM f a
+  changeBindersM f decl = mapM (changeBindersM f) decl
+
 data ValueFixity = ValueFixity Fixity (Qualified (Either Ident (ProperName 'ConstructorName))) (OpName 'ValueOpName)
   deriving (Eq, Ord, Show)
 
@@ -567,7 +571,7 @@ data TypeInstanceBody' a
   -- ^ This is a derived instance
   | NewtypeInstance
   -- ^ This is an instance derived from a newtype
-  | NewtypeInstanceWithDictionary (Expr' a)
+  | NewtypeInstanceWithDictionary a
   -- ^ This is an instance derived from a newtype, desugared to include a
   -- dictionary for the type under the newtype.
   | ExplicitInstance [Declaration' a]
@@ -697,21 +701,42 @@ flattenDecls = concatMap flattenOne
 -- |
 -- A guard is just a boolean-valued expression that appears alongside a set of binders
 --
-data Guard' a = ConditionGuard (Expr' a)
-              | PatternGuard (Binder' a) (Expr' a)
+data Guard' a = ConditionGuard a
+              | PatternGuard (Binder' a) a
               deriving (Show, Functor, Foldable, Traversable)
+
+instance HasBinders a => HasBinders (Guard' a) where
+  changeBindersM f (PatternGuard binder a) = PatternGuard <$> f binder <*> changeBindersM f a
+  changeBindersM f (ConditionGuard a) = ConditionGuard <$> changeBindersM f a
+
+instance Visit a Binder' => Visit (Guard' a) Binder' where
+  visitM f (PatternGuard binder a) = PatternGuard <$> f binder <*> visitM f a
+  visitM f (ConditionGuard a) = ConditionGuard <$> visitM f a
+
+instance Visit a AbstractExpr => Visit (Guard' a) AbstractExpr where
+  visitM f g = mapM (visitM f) g
+
+instance Visit a Declaration' => Visit (Guard' a) Declaration' where
+  visitM f g = mapM (visitM f) g
 
 -- |
 -- The right hand side of a binder in value declarations
 -- and case expressions.
-data GuardedExpr' a = GuardedExpr [Guard' a] (Expr' a)
+data Guarded' a = Guarded [Guard' a] a
                   deriving (Show, Functor, Foldable, Traversable)
 
-pattern MkUnguarded :: Expr' a -> GuardedExpr' a
-pattern MkUnguarded e = GuardedExpr [] e
+instance HasBinders a => HasBinders (Guarded' a) where
+  changeBindersM f (Guarded guards a) = Guarded <$> mapM (changeBindersM f) guards <*> changeBindersM f a
+
+-- | Apply a function to the expression in a guard
+-- alterExprInGuard :: (AnnExpr a -> AnnExpr a) -> GuardedAnnExpr a -> GuardedAnnExpr a
+-- alterExprInGuard f (GuardedExpr guards e) = GuardedExpr (fmap f <$> guards) (f e)
+
+pattern MkUnguarded :: a -> Guarded' a
+pattern MkUnguarded e = Guarded [] e
 
 newtype ExprValueDeclaration a =
-  ExprValueDeclaration (ValueDeclarationData' [GuardedExpr' a] a)
+  ExprValueDeclaration (ValueDeclarationData' [Guarded' a] a)
   deriving (Show)
 
 instance Functor ExprValueDeclaration where
@@ -733,23 +758,46 @@ instance Traversable ExprValueDeclaration where
         <$> traverse (traverse f) bs
         <*> traverse (traverse f) es
 
+-- | An expression holding some annotation and another expression inside it
+data AnnExpr a = AnnExpr { eAnn :: a, eExpr :: (AbstractExpr (AnnExpr a)) }
+  deriving (Show)
+
+instance HasBinders a => HasBinders (AnnExpr a) where
+  changeBindersM f (AnnExpr ann a) = AnnExpr ann <$> changeBindersM f a
+
+-- | AnnExpr is a functor where the polymorphic type is the annotation.
+instance Functor AnnExpr where
+  fmap f (AnnExpr a e) = AnnExpr (f a) (fmap f <$> e)
+
+instance Foldable AnnExpr where
+  foldMap f (AnnExpr a e) = f a <> foldMap (foldMap f) e
+
+instance Traversable AnnExpr where
+  traverse f (AnnExpr a e) = AnnExpr <$> f a <*> traverse (traverse f) e
+
+-- | Translate a function which operates on an abstract expr into one which operates on an expr.
+mapAnnExpr :: (AbstractExpr (AnnExpr a) -> AbstractExpr (AnnExpr a)) -> (AnnExpr a -> AnnExpr a)
+mapAnnExpr f (AnnExpr ss e) = AnnExpr ss (f e)
+
 -- |
 -- Data type for expressions and terms
+-- The internal type is left polymorphic. It can be used to attach additional
+-- information to the expression tree. For example, source position or type.
 --
-data Expr' a
+data AbstractExpr a
   -- |
   -- A literal value
   --
-  = Literal a (Literal (Expr' a))
+  = Literal (Literal a)
   -- |
   -- A prefix -, will be desugared
   --
-  | UnaryMinus a (Expr' a)
+  | UnaryMinus a
   -- |
   -- Binary operator application. During the rebracketing phase of desugaring, this data constructor
   -- will be removed.
   --
-  | BinaryNoParens (Expr' a) (Expr' a) (Expr' a)
+  | BinaryNoParens a a a
   -- |
   -- Explicit parentheses. During the rebracketing phase of desugaring, this data constructor
   -- will be removed.
@@ -757,30 +805,30 @@ data Expr' a
   -- Note: although it seems this constructor is not used, it _is_ useful, since it prevents
   -- certain traversals from matching.
   --
-  | Parens (Expr' a)
+  | Parens a
   -- |
   -- An record property accessor expression (e.g. `obj.x` or `_.x`).
   -- Anonymous arguments will be removed during desugaring and expanded
   -- into a lambda that reads a property from a record.
   --
-  | Accessor PSString (Expr' a)
+  | Accessor PSString a
   -- |
   -- Partial record update
   --
-  | ObjectUpdate (Expr' a) [(PSString, Expr' a)]
+  | ObjectUpdate a [(PSString, a)]
   -- |
   -- Object updates with nested support: `x { foo { bar = e } }`
   -- Replaced during desugaring into a `Let` and nested `ObjectUpdate`s
   --
-  | ObjectUpdateNested (Expr' a) (PathTree (Expr' a))
+  | ObjectUpdateNested a (PathTree a)
   -- |
   -- Function introduction
   --
-  | Abs (Binder' a) (Expr' a)
+  | Abs (Binder' a) a
   -- |
   -- Function application
   --
-  | App (Expr' a) (Expr' a)
+  | App a a
   -- |
   -- Variable
   --
@@ -793,7 +841,7 @@ data Expr' a
   -- |
   -- Conditional (if-then-else expression)
   --
-  | IfThenElse (Expr' a) (Expr' a) (Expr' a)
+  | IfThenElse a a a
   -- |
   -- A data constructor
   --
@@ -802,15 +850,15 @@ data Expr' a
   -- A case expression. During the case expansion phase of desugaring, top-level binders will get
   -- desugared into case expressions, hence the need for guards and multiple binders per branch here.
   --
-  | Case [(Expr' a)] [CaseAlternative' a]
+  | Case [a] [CaseAlternative' a]
   -- |
   -- A value with a type annotation
   --
-  | TypedValue Bool (Expr' a) SourceType
+  | TypedValue Bool a SourceType
   -- |
   -- A let binding
   --
-  | Let WhereProvenance [Declaration' a] (Expr' a)
+  | Let WhereProvenance [Declaration' a] a
   -- |
   -- A do-notation block
   --
@@ -818,12 +866,12 @@ data Expr' a
   -- |
   -- An ado-notation block
   --
-  | Ado (Maybe ModuleName) [DoNotationElement' a] (Expr' a)
+  | Ado (Maybe ModuleName) [DoNotationElement' a] a
   -- |
   -- An application of a typeclass dictionary constructor. The value should be
   -- an ObjectLiteral.
   --
-  | TypeClassDictionaryConstructorApp (Qualified (ProperName 'ClassName)) (Expr' a)
+  | TypeClassDictionaryConstructorApp (Qualified (ProperName 'ClassName)) a
   -- |
   -- A placeholder for a type class dictionary to be inserted later. At the end of type checking, these
   -- placeholders will be replaced with actual expressions representing type classes dictionaries which
@@ -853,8 +901,20 @@ data Expr' a
   -- |
   -- A value with source position information
   --
-  | PositionedValue a [Comment] (Expr' a)
+  | PositionedValue [Comment] a
   deriving (Show, Functor, Foldable, Traversable)
+
+instance HasBinders a => HasBinders (AbstractExpr a) where
+  changeBindersM f (Abs binder a) = Abs <$> f binder <*> changeBindersM f a
+  changeBindersM f expr = mapM (changeBindersM f) expr
+
+-- class HasExpressions a where
+--   -- Apply a pure function to each expression.
+--   changeExprs :: (forall t. Binder' t -> Binder' t) -> a -> a
+--   changeExprs f = runIdentity . changeExprsM (pure . f)
+
+--   -- "Visit" the expression in a monadic context, potentially altering it.
+--   changeExprsM :: Monad m => (forall t. Binder' t -> m (Binder' t)) -> a -> m a
 
 -- |
 -- Metadata that tells where a let binding originated
@@ -881,8 +941,14 @@ data CaseAlternative' a = CaseAlternative
     -- |
     -- The result expression or a collect of guarded expressions
     --
-  , caseAlternativeResult :: [GuardedExpr' a]
+  , caseAlternativeResult :: [Guarded' a]
   } deriving (Show, Functor, Foldable, Traversable)
+
+instance HasBinders a => HasBinders (CaseAlternative' a) where
+  changeBindersM f ca = do
+    CaseAlternative
+      <$> mapM f (caseAlternativeBinders ca)
+      <*> mapM (changeBindersM f) (caseAlternativeResult ca)
 
 -- |
 -- A statement in a do-notation block
@@ -891,11 +957,11 @@ data DoNotationElement' a
   -- |
   -- A monadic value without a binder
   --
-  = DoNotationValue (Expr' a)
+  = DoNotationValue a
   -- |
   -- A monadic value with a binder
   --
-  | DoNotationBind (Binder' a) (Expr' a)
+  | DoNotationBind (Binder' a) a
   -- |
   -- A let statement, i.e. a pure value with a binder
   --
@@ -906,6 +972,10 @@ data DoNotationElement' a
   | PositionedDoNotationElement a [Comment] (DoNotationElement' a)
   deriving (Show, Functor, Foldable, Traversable)
 
+instance HasBinders a => HasBinders (DoNotationElement' a) where
+  changeBindersM f = \case
+    DoNotationBind binder a -> DoNotationBind <$> f binder <*> changeBindersM f a
+    element -> mapM (changeBindersM f) element
 
 -- For a record update such as:
 --
@@ -943,10 +1013,12 @@ $(deriveJSON (defaultOptions { sumEncoding = ObjectWithSingleField }) ''Declarat
 $(deriveJSON (defaultOptions { sumEncoding = ObjectWithSingleField }) ''ImportDeclarationType)
 $(deriveJSON (defaultOptions { sumEncoding = ObjectWithSingleField }) ''ExportSource)
 
-isTrueExpr :: Expr' a -> Bool
-isTrueExpr (Literal _ (BooleanLiteral True)) = True
-isTrueExpr (Var _ (Qualified (Just (ModuleName [ProperName "Prelude"])) (Ident "otherwise"))) = True
-isTrueExpr (Var _ (Qualified (Just (ModuleName [ProperName "Data", ProperName "Boolean"])) (Ident "otherwise"))) = True
-isTrueExpr (TypedValue _ e _) = isTrueExpr e
-isTrueExpr (PositionedValue _ _ e) = isTrueExpr e
-isTrueExpr _ = False
+isTrueExpr :: AnnExpr a -> Bool
+isTrueExpr = go . eExpr where
+  go :: AbstractExpr (AnnExpr a) -> Bool
+  go (Literal (BooleanLiteral True)) = True
+  go (Var _ (Qualified (Just (ModuleName [ProperName "Prelude"])) (Ident "otherwise"))) = True
+  go (Var _ (Qualified (Just (ModuleName [ProperName "Data", ProperName "Boolean"])) (Ident "otherwise"))) = True
+  go (TypedValue _ e' _) = isTrueExpr e'
+  go (PositionedValue _ e') = isTrueExpr e'
+  go _ = False

@@ -19,12 +19,10 @@ desugarLetPatternModule (Module ss coms mn ds exts) = Module ss coms mn (map des
 
 -- | Desugar a single let expression
 desugarLetPattern :: Declaration -> Declaration
-desugarLetPattern decl =
-  let (f, _, _) = everywhereOnValues id replace id
-  in f decl
+desugarLetPattern = fmap replace
   where
   replace :: Expr -> Expr
-  replace (Let w ds e) = go w (partitionDecls ds) e
+  replace (eExpr -> Let w ds e) = go w (partitionDecls ds) e
   replace other = other
 
   go :: WhereProvenance
@@ -36,8 +34,11 @@ desugarLetPattern decl =
      -> Expr
   go _ [] e = e
   go w (Right ((pos, com), binder, boundE) : ds) e =
-    PositionedValue pos com $ Case [boundE] [CaseAlternative [binder] [MkUnguarded $ go w ds e]]
-  go w (Left ds:dss) e = Let w ds (go w dss e)
+    AnnExpr pos $
+      PositionedValue com $
+        AnnExpr pos $
+          Case [boundE] [CaseAlternative [binder] [MkUnguarded $ go w ds e]]
+  go w (Left ds:dss) e = AnnExpr (eAnn e) $ Let w ds (go w dss e)
 
 partitionDecls :: [Declaration] -> [Either [Declaration] (SourceAnn, Binder, Expr)]
 partitionDecls = concatMap f . groupBy ((==) `on` isBoundValueDeclaration)

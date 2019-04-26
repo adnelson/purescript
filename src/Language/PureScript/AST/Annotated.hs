@@ -38,7 +38,7 @@ import qualified Language.PureScript.Constants as C
 
 import qualified Text.Parsec as P
 
--- * Monomorphic types, including source annotations
+-- * Monomorphic types, which refer to expressions tagged with source locations
 type Expr = Expr' SourceSpan
 type CaseAlternative = CaseAlternative' SourceSpan
 type DoNotationElement = DoNotationElement' SourceSpan

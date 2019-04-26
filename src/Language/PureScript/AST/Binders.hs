@@ -5,14 +5,14 @@
 module Language.PureScript.AST.Binders where
 
 import Prelude.Compat
+import Control.Monad.Identity (runIdentity)
+import Lens.Micro.Platform
 
 import Language.PureScript.AST.SourcePos
 import Language.PureScript.AST.Literals
 import Language.PureScript.Names
 import Language.PureScript.Comments
 import Language.PureScript.Types
-
-type Binder = Binder' SourceSpan
 
 -- |
 -- Data type for binders
@@ -65,6 +65,23 @@ data Binder' a
   --
   | TypedBinder SourceType (Binder' a)
   deriving (Show, Functor, Foldable, Traversable)
+
+class Visit inner outer where
+  -- "Visit" the binder in a monadic context, potentially altering it.
+  visitM :: Monad m => (forall t. f t -> m (f t)) -> a -> m a
+
+-- class HasBinders a = Visit a Binder'
+
+class BinderLens f where
+  binderLens :: Lens' (f a) (Binder' a)
+
+class HasBinders a where
+  -- Apply a pure function to each binder.
+  changeBinders :: (forall t. Binder' t -> Binder' t) -> a -> a
+  changeBinders f = runIdentity . changeBindersM (pure . f)
+
+  -- "Visit" the binder in a monadic context, potentially altering it.
+  changeBindersM :: Monad m => (forall t. Binder' t -> m (Binder' t)) -> a -> m a
 
 -- Manual Eq and Ord instances for `Binder` were added on 2018-03-05. Comparing
 -- the `SourceSpan` values embedded in some of the data constructors of `Binder`
