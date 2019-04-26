@@ -51,7 +51,7 @@ findExportable (Module _ _ mn ds _) =
     exportType ss Internal exps tn [] source
   updateExports exps (ExternDataDeclaration (ss, _) tn _) =
     exportType ss Internal exps tn [] source
-  updateExports exps (ValueDeclaration vd) =
+  updateExports exps (ValueDeclaration (ExprValueDeclaration vd)) =
     exportValue (fst (valdeclSourceAnn vd)) exps (valdeclIdent vd) source
   updateExports exps (ValueFixityDeclaration (ss, _) _ _ op) =
     exportValueOp ss exps op source

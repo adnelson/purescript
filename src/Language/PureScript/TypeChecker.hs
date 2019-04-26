@@ -365,7 +365,7 @@ typeCheckAll moduleName _ = traverse go
     return instDecls
     where
     memberName :: Declaration -> Ident
-    memberName (ValueDeclaration vd) = valdeclIdent vd
+    memberName (ValueDeclaration (ExprValueDeclaration vd)) = valdeclIdent vd
     memberName _ = internalError "checkInstanceMembers: Invalid declaration in type instance definition"
 
     firstDuplicate :: (Eq a) => [a] -> Maybe a
