@@ -565,9 +565,13 @@ prettyPrintSingleError (PPEOptions codeColor full level showDocs relPath) e = fl
     renderSimpleErrorMessage (CycleInDeclaration nm) =
       line $ "The value of " <> markCode (showIdent nm) <> " is undefined here, so this reference is not allowed."
     renderSimpleErrorMessage (CycleInModules mns) =
-      paras [ line "There is a cycle in module dependencies in these modules: "
-            , indent $ paras (map (line . markCode . runModuleName) mns)
-            ]
+      case mns of
+        [mn] ->
+          line $ "Module " <> markCode (runModuleName mn) <> " imports itself."
+        _ ->
+          paras [ line "There is a cycle in module dependencies in these modules: "
+                , indent $ paras (map (line . markCode . runModuleName) mns)
+                ]
     renderSimpleErrorMessage (CycleInTypeSynonym name) =
       paras [ line $ case name of
                        Just pn -> "A cycle appears in the definition of type synonym " <> markCode (runProperName pn)
@@ -581,7 +585,7 @@ prettyPrintSingleError (PPEOptions codeColor full level showDocs relPath) e = fl
       paras [ line $ "A cycle appears in a set of type class definitions:"
             , indent $ line $ "{" <> (T.intercalate ", " (map (markCode . runProperName . disqualify) names)) <> "}"
             , line "Cycles are disallowed because they can lead to loops in the type checker."
-            ]  
+            ]
     renderSimpleErrorMessage (NameIsUndefined ident) =
       line $ "Value " <> markCode (showIdent ident) <> " is undefined."
     renderSimpleErrorMessage (UndefinedTypeVariable name) =

@@ -31,8 +31,8 @@ import qualified Language.PureScript.CoreImp.AST as AST
 import Language.PureScript.CoreImp.Optimizer
 import Language.PureScript.CoreFn
 import Language.PureScript.Crash
-import Language.PureScript.Errors (ErrorMessageHint(..), SimpleErrorMessage(..),
-                                   MultipleErrors(..), rethrow, errorMessage,
+import Language.PureScript.AST.Declarations(ErrorMessageHint'(..), SimpleErrorMessage'(..))
+import Language.PureScript.Errors (MultipleErrors(..), rethrow, errorMessage,
                                    errorMessage', rethrowWithPosition, addHint)
 import Language.PureScript.Names
 import Language.PureScript.Options
