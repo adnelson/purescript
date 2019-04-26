@@ -84,7 +84,7 @@ augmentDeclarations (partitionEithers -> (augments, toplevels)) =
     d { declChildren = declChildren d ++ [child] }
 
 getDeclarationTitle :: P.Declaration -> Maybe Text
-getDeclarationTitle (P.ValueDeclaration vd) = Just (P.showIdent (P.valdeclIdent vd))
+getDeclarationTitle (P.ValueDeclaration (P.ExprValueDeclaration vd)) = Just (P.showIdent (P.valdeclIdent vd))
 getDeclarationTitle (P.ExternDeclaration _ name _) = Just (P.showIdent name)
 getDeclarationTitle (P.DataDeclaration _ _ name _ _) = Just (P.runProperName name)
 getDeclarationTitle (P.ExternDataDeclaration _ name _) = Just (P.runProperName name)
