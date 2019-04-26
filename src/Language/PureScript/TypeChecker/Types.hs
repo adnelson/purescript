@@ -71,6 +71,19 @@ data BindingGroupType
 -- | The result of a successful type check.
 data TypedValue' = TypedValue' Bool Expr SourceType
 
+data TypedExpr = TypedExpr Bool SourceSpan SourceType (Expr' TypedExpr)
+
+teSourceSpan :: TypedExpr -> SourceSpan
+teSourceSpan (TypedExpr _ span _ _) = span
+
+unwrapTypedExpr :: TypedExpr -> TypedValue'
+unwrapTypedExpr (TypedExpr check _ type_ expr) = do
+  let e :: Expr = fmap teSourceSpan expr
+  TypedValue' check e type_
+--  TypedValue' check
+-- unwrapTypedValue :: TypedValue' -> (Bool, Expr, SourceType)
+-- unwrapTypedValue (T
+
 -- | Convert an type checked value into an expression.
 tvToExpr :: TypedValue' -> Expr
 tvToExpr (TypedValue' c e t) = TypedValue c e t

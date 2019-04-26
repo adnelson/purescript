@@ -342,7 +342,7 @@ typeInstanceDictionaryDeclaration sa@(ss, _) name mn deps className tys decls =
   memberToValue _ _ = internalError "Invalid declaration in type instance definition"
 
 declIdent :: Declaration -> Maybe Ident
-declIdent (ValueDeclaration vd) = Just (valdeclIdent vd)
+declIdent (ValueDeclaration (ExprValueDeclaration vd)) = Just (valdeclIdent vd)
 declIdent (TypeDeclaration td) = Just (tydeclIdent td)
 declIdent _ = Nothing
 

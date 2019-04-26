@@ -46,7 +46,7 @@ type Declaration = Declaration' SourceSpan
 type GuardedExpr = GuardedExpr' SourceSpan
 type Guard = Guard' SourceSpan
 type Module = Module' SourceSpan
-type ValueDeclarationData = ValueDeclarationData' SourceSpan
+type ValueDeclarationData e = ValueDeclarationData' e SourceSpan
 type TypeInstanceBody = TypeInstanceBody' SourceSpan
 type ErrorMessage = ErrorMessage' SourceSpan
 type SimpleErrorMessage = SimpleErrorMessage' SourceSpan
@@ -192,7 +192,7 @@ data SimpleErrorMessage' a
   | CannotDefinePrimModules ModuleName
   | MixedAssociativityError (NEL.NonEmpty (Qualified (OpName 'AnyOpName), Associativity))
   | NonAssociativeError (NEL.NonEmpty (Qualified (OpName 'AnyOpName)))
-  deriving (Show)
+  deriving (Show, Functor, Foldable, Traversable)
 
 -- | Error message hints, providing more detailed information about failure.
 data ErrorMessageHint' a
@@ -218,7 +218,7 @@ data ErrorMessageHint' a
   | ErrorInForeignImport Ident
   | ErrorSolvingConstraint SourceConstraint
   | PositionedError (NEL.NonEmpty SourceSpan)
-  deriving (Show)
+  deriving (Show, Functor, Foldable, Traversable)
 
 -- | Categories of hints
 data HintCategory
@@ -466,7 +466,7 @@ unwrapTypeDeclaration td = (tydeclIdent td, tydeclType td)
 -- @double x = x + x@
 --
 -- In this example @double@ is the identifier, @x@ is a binder and @x + x@ is the expression.
-data ValueDeclarationData' a expr = ValueDeclarationData
+data ValueDeclarationData' expr a = ValueDeclarationData
   { valdeclSourceAnn :: !SourceAnn
   , valdeclIdent :: !Ident
   -- ^ The declared value's name
@@ -476,16 +476,16 @@ data ValueDeclarationData' a expr = ValueDeclarationData
   , valdeclExpression :: !expr
   } deriving (Show, Functor, Foldable, Traversable)
 
-overValueDeclaration :: (ValueDeclarationData' a [GuardedExpr' a] -> ValueDeclarationData' a [GuardedExpr' a]) -> Declaration' a -> Declaration' a
-overValueDeclaration f d = maybe d (ValueDeclaration . f) (getValueDeclaration d)
+overValueDeclaration :: (ValueDeclarationData' [GuardedExpr' a] a -> ValueDeclarationData' [GuardedExpr' a] a) -> Declaration' a -> Declaration' a
+overValueDeclaration f d = maybe d (ValueDeclaration . ExprValueDeclaration . f) (getValueDeclaration d)
 
-getValueDeclaration :: Declaration' a -> Maybe (ValueDeclarationData' a [GuardedExpr' a])
-getValueDeclaration (ValueDeclaration d) = Just d
+getValueDeclaration :: Declaration' a -> Maybe (ValueDeclarationData' [GuardedExpr' a] a)
+getValueDeclaration (ValueDeclaration (ExprValueDeclaration d)) = Just d
 getValueDeclaration _ = Nothing
 
 pattern ValueDecl :: SourceAnn -> Ident -> NameKind -> [Binder' a] -> [GuardedExpr' a] -> Declaration' a
 pattern ValueDecl sann ident name binders expr
-  = ValueDeclaration (ValueDeclarationData sann ident name binders expr)
+  = ValueDeclaration (ExprValueDeclaration (ValueDeclarationData sann ident name binders expr))
 
 -- |
 -- The data type of declarations
@@ -510,7 +510,7 @@ data Declaration' a
   -- |
   -- A value declaration (name, top-level binders, optional guard, value)
   --
-  | ValueDeclaration {-# UNPACK #-} !(ValueDeclarationData' a [GuardedExpr' a])
+  | ValueDeclaration {-# UNPACK #-} !(ExprValueDeclaration a)
   -- |
   -- A declaration paired with pattern matching in let-in expression (binder, optional guard, value)
   | BoundValueDeclaration SourceAnn (Binder' a) (Expr' a)
@@ -547,7 +547,7 @@ data Declaration' a
   -- dependencies, class name, instance types, member declarations)
   --
   | TypeInstanceDeclaration SourceAnn [Ident] Integer Ident [SourceConstraint] (Qualified (ProperName 'ClassName)) [SourceType] (TypeInstanceBody' a)
-  deriving (Show)
+  deriving (Show, Functor, Foldable, Traversable)
 
 data ValueFixity = ValueFixity Fixity (Qualified (Either Ident (ProperName 'ConstructorName))) (OpName 'ValueOpName)
   deriving (Eq, Ord, Show)
@@ -572,7 +572,7 @@ data TypeInstanceBody' a
   -- dictionary for the type under the newtype.
   | ExplicitInstance [Declaration' a]
   -- ^ This is a regular (explicit) instance
-  deriving (Show)
+  deriving (Show, Functor, Foldable, Traversable)
 
 mapTypeInstanceBody :: ([Declaration' a] -> [Declaration' a]) -> TypeInstanceBody' a -> TypeInstanceBody' a
 mapTypeInstanceBody f = runIdentity . traverseTypeInstanceBody (Identity . f)
@@ -587,7 +587,7 @@ declSourceAnn (DataDeclaration sa _ _ _ _) = sa
 declSourceAnn (DataBindingGroupDeclaration ds) = declSourceAnn (NEL.head ds)
 declSourceAnn (TypeSynonymDeclaration sa _ _ _) = sa
 declSourceAnn (TypeDeclaration td) = tydeclSourceAnn td
-declSourceAnn (ValueDeclaration vd) = valdeclSourceAnn vd
+declSourceAnn (ValueDeclaration (ExprValueDeclaration vd)) = valdeclSourceAnn vd
 declSourceAnn (BoundValueDeclaration sa _ _) = sa
 declSourceAnn (BindingGroupDeclaration ds) = let ((sa, _), _, _) = NEL.head ds in sa
 declSourceAnn (ExternDeclaration sa _ _) = sa
@@ -604,7 +604,7 @@ declSourceSpan = fst . declSourceAnn
 declName :: Declaration' a -> Maybe Name
 declName (DataDeclaration _ _ n _ _) = Just (TyName n)
 declName (TypeSynonymDeclaration _ n _ _) = Just (TyName n)
-declName (ValueDeclaration vd) = Just (IdentName (valdeclIdent vd))
+declName (ValueDeclaration (ExprValueDeclaration vd)) = Just (IdentName (valdeclIdent vd))
 declName (ExternDeclaration _ n _) = Just (IdentName n)
 declName (ExternDataDeclaration _ n _) = Just (TyName n)
 declName (ExternKindDeclaration _ n) = Just (KiName n)
@@ -699,16 +699,39 @@ flattenDecls = concatMap flattenOne
 --
 data Guard' a = ConditionGuard (Expr' a)
               | PatternGuard (Binder' a) (Expr' a)
-              deriving (Show)
+              deriving (Show, Functor, Foldable, Traversable)
 
 -- |
 -- The right hand side of a binder in value declarations
 -- and case expressions.
 data GuardedExpr' a = GuardedExpr [Guard' a] (Expr' a)
-                  deriving (Show)
+                  deriving (Show, Functor, Foldable, Traversable)
 
 pattern MkUnguarded :: Expr' a -> GuardedExpr' a
 pattern MkUnguarded e = GuardedExpr [] e
+
+newtype ExprValueDeclaration a =
+  ExprValueDeclaration (ValueDeclarationData' [GuardedExpr' a] a)
+  deriving (Show)
+
+instance Functor ExprValueDeclaration where
+  fmap f (ExprValueDeclaration valdef) = do -- (ValueDeclarationData' {..})) =
+    ExprValueDeclaration valdef {
+      valdeclBinders = fmap (fmap f) (valdeclBinders valdef),
+      valdeclExpression = fmap (fmap f) (valdeclExpression valdef)
+      }
+
+instance Foldable ExprValueDeclaration where
+  foldMap f (ExprValueDeclaration valdef) = mconcat $
+    map (foldMap f) (valdeclBinders valdef)
+    <> map (foldMap f) (valdeclExpression valdef)
+
+instance Traversable ExprValueDeclaration where
+  traverse f (ExprValueDeclaration (ValueDeclarationData a i n bs es)) =
+    fmap ExprValueDeclaration $
+      ValueDeclarationData a i n
+        <$> traverse (traverse f) bs
+        <*> traverse (traverse f) es
 
 -- |
 -- Data type for expressions and terms
@@ -831,7 +854,7 @@ data Expr' a
   -- A value with source position information
   --
   | PositionedValue a [Comment] (Expr' a)
-  deriving (Show)
+  deriving (Show, Functor, Foldable, Traversable)
 
 -- |
 -- Metadata that tells where a let binding originated
@@ -859,7 +882,7 @@ data CaseAlternative' a = CaseAlternative
     -- The result expression or a collect of guarded expressions
     --
   , caseAlternativeResult :: [GuardedExpr' a]
-  } deriving (Show)
+  } deriving (Show, Functor, Foldable, Traversable)
 
 -- |
 -- A statement in a do-notation block
@@ -881,7 +904,7 @@ data DoNotationElement' a
   -- A do notation element with source position information
   --
   | PositionedDoNotationElement a [Comment] (DoNotationElement' a)
-  deriving (Show)
+  deriving (Show, Functor, Foldable, Traversable)
 
 
 -- For a record update such as:

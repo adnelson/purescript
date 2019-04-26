@@ -206,7 +206,7 @@ isTypeSynonym (TypeSynonymDeclaration _ pn _ _) = Just pn
 isTypeSynonym _ = Nothing
 
 mkDeclaration :: ValueDeclarationData Expr -> Declaration
-mkDeclaration = ValueDeclaration . fmap (pure . MkUnguarded)
+mkDeclaration = ValueDeclaration . ExprValueDeclaration . fmap (pure . MkUnguarded)
 
 fromValueDecl :: ValueDeclarationData Expr -> ((SourceAnn, Ident), NameKind, Expr)
 fromValueDecl (ValueDeclarationData sa ident nameKind [] val) = ((sa, ident), nameKind, val)

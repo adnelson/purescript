@@ -269,7 +269,7 @@ everythingOnValues (<>.) f g h i j = (f', g', h', i', j')
 
   f' :: Declaration -> r
   f' d@(DataBindingGroupDeclaration ds) = foldl (<>.) (f d) (fmap f' ds)
-  f' d@(ValueDeclaration vd) = foldl (<>.) (f d) (fmap h' (valdeclBinders vd) ++ concatMap (\(GuardedExpr grd v) -> fmap k' grd ++ [g' v]) (valdeclExpression vd))
+  f' d@(ValueDeclaration (ExprValueDeclaration vd)) = foldl (<>.) (f d) (fmap h' (valdeclBinders vd) ++ concatMap (\(GuardedExpr grd v) -> fmap k' grd ++ [g' v]) (valdeclExpression vd))
   f' d@(BindingGroupDeclaration ds) = foldl (<>.) (f d) (fmap (\(_, _, val) -> g' val) ds)
   f' d@(TypeClassDeclaration _ _ _ _ _ ds) = foldl (<>.) (f d) (fmap f' ds)
   f' d@(TypeInstanceDeclaration _ _ _ _ _ _ _ (ExplicitInstance ds)) = foldl (<>.) (f d) (fmap f' ds)
@@ -348,7 +348,7 @@ everythingWithContextOnValues s0 r0 (<>.) f g h i j = (f'' s0, g'' s0, h'' s0, i
 
   f' :: s -> Declaration -> r
   f' s (DataBindingGroupDeclaration ds) = foldl (<>.) r0 (fmap (f'' s) ds)
-  f' s (ValueDeclaration vd) = foldl (<>.) r0 (fmap (h'' s) (valdeclBinders vd) ++ concatMap (\(GuardedExpr grd v) -> fmap (k' s) grd ++ [g'' s v]) (valdeclExpression vd))
+  f' s (ValueDeclaration (ExprValueDeclaration vd)) = foldl (<>.) r0 (fmap (h'' s) (valdeclBinders vd) ++ concatMap (\(GuardedExpr grd v) -> fmap (k' s) grd ++ [g'' s v]) (valdeclExpression vd))
   f' s (BindingGroupDeclaration ds) = foldl (<>.) r0 (fmap (\(_, _, val) -> g'' s val) ds)
   f' s (TypeClassDeclaration _ _ _ _ _ ds) = foldl (<>.) r0 (fmap (f'' s) ds)
   f' s (TypeInstanceDeclaration _ _ _ _ _ _ _ (ExplicitInstance ds)) = foldl (<>.) r0 (fmap (f'' s) ds)
@@ -612,7 +612,7 @@ everythingWithScope f g h i j = (f'', g'', h'', i'', \s -> snd . j'' s)
     in r <> l' s' (GuardedExpr gs e)
 
   getDeclIdent :: Declaration -> Maybe Ident
-  getDeclIdent (ValueDeclaration vd) = Just (valdeclIdent vd)
+  getDeclIdent (ValueDeclaration (ExprValueDeclaration vd)) = Just (valdeclIdent vd)
   getDeclIdent (TypeDeclaration td) = Just (tydeclIdent td)
   getDeclIdent _ = Nothing
 
