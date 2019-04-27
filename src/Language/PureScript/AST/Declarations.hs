@@ -40,12 +40,12 @@ import qualified Text.Parsec as P
 
 -- * Monomorphic types, which refer to expressions tagged with source locations
 type Expr = AnnExpr SourceSpan
-type Expr' = AbstractExpr AnnExpr SourceSpan
+type Expr' = AbstractExpr SourceSpan
 type Binder = Binder' SourceSpan
 type CaseAlternative = CaseAlternative' SourceSpan
 type DoNotationElement = DoNotationElement' SourceSpan
 type Declaration = Declaration' SourceSpan
-type GuardedExpr = Guarded' SourceSpan
+type GuardedExpr = GuardedExpr' SourceSpan
 type Guard = Guard' SourceSpan
 type Module = Module' SourceSpan
 type ValueDeclarationData e = ValueDeclarationData' e SourceSpan
@@ -478,7 +478,7 @@ data ValueDeclarationData' expr a = ValueDeclarationData
   , valdeclExpression :: !expr
   } deriving (Show, Functor, Foldable, Traversable)
 
-pattern ValueDecl :: (a, [Comment]) -> Ident -> NameKind -> [Binder' a] -> [Guarded' a] -> Declaration' a
+pattern ValueDecl :: (a, [Comment]) -> Ident -> NameKind -> [Binder' a] -> [GuardedExpr' a] -> Declaration' a
 pattern ValueDecl sann ident name binders expr
   = ValueDeclaration (ExprValueDeclaration (ValueDeclarationData ident name sann binders expr))
 
@@ -699,18 +699,20 @@ data Guard' a = ConditionGuard (AnnExpr a)
 -- |
 -- The right hand side of a binder in value declarations
 -- and case expressions.
-data Guarded' a = Guarded [Guard' a] (AnnExpr a)
+data GuardedExpr' a = GuardedExpr [Guard' a] (AnnExpr a)
                   deriving (Show, Functor, Foldable, Traversable)
 
 -- | Apply a function to the expression in a guard
 -- alterExprInGuard :: (AnnExpr a -> AnnExpr a) -> GuardedAnnExpr a -> GuardedAnnExpr a
 -- alterExprInGuard f (GuardedExpr guards e) = GuardedExpr (fmap f <$> guards) (f e)
 
-pattern MkUnguarded :: AnnExpr a -> Guarded' a
-pattern MkUnguarded e = Guarded [] e
+pattern MkUnguarded :: AnnExpr a -> GuardedExpr' a
+pattern MkUnguarded e = GuardedExpr [] e
 
+-- | Creates a (more) monomorphized version of ValueDeclarationData
+-- which lets us write instances for it.
 newtype ExprValueDeclaration a =
-  ExprValueDeclaration (ValueDeclarationData' [Guarded' a] a)
+  ExprValueDeclaration (ValueDeclarationData' [GuardedExpr' a] a)
   deriving (Show)
 
 instance Functor ExprValueDeclaration where
@@ -737,7 +739,7 @@ instance Traversable ExprValueDeclaration where
 -- | An expression holding some annotation and another expression inside it
 -- The internal type is left polymorphic. It can be used to attach additional
 -- information to the expression tree. For example, source position or type.
-data AnnExpr a = AnnExpr { eAnn :: a, eExpr :: AbstractExpr AnnExpr a }
+data AnnExpr a = AnnExpr { eAnn :: a, eExpr :: AbstractExpr a }
   deriving (Show)
 
 -- | AnnExpr is a functor where the polymorphic type is the annotation.
@@ -751,49 +753,37 @@ instance Traversable AnnExpr where
   traverse f (AnnExpr a e) = AnnExpr <$> f a <*> traverse f e
 
 -- | Translate a function which operates on an abstract expr into one which operates on an expr.
-mapAnnExpr :: (AbstractExpr AnnExpr a -> AbstractExpr AnnExpr a) -> (AnnExpr a -> AnnExpr a)
-mapAnnExpr f (AnnExpr ss e) = AnnExpr ss (f e)
+mapE :: (AbstractExpr a -> AbstractExpr a) -> (AnnExpr a -> AnnExpr a)
+mapE f (AnnExpr ss e) = AnnExpr ss (f e)
 
-mapAbsExpr :: (AnnExpr a -> AnnExpr a) -> AbstractExpr AnnExpr a -> AbstractExpr AnnExpr a
-mapAbsExpr f = \case
-  Literal lit -> Literal lit
-  UnaryMinus e -> UnaryMinus (f e)
-  BinaryNoParens a b c -> BinaryNoParens (f a) (f b) (f c)
-  Parens e -> Parens (f e)
-  Accessor s e -> Accessor s <$> visit v e
-  ObjectUpdate e es -> ObjectUpdate <$> visit v e <*> mapM (\(f, e') -> (f,) <$> visit v e') es
-  ObjectUpdateNested e pt -> ObjectUpdateNested <$> visit v e <*> mapM (visit v) pt
-  Abs arg e -> Abs <$> visit v arg <*> visit v e
-  App e e' -> App <$> visit v e <*> visit v e'
-  Var e i -> flip Var i <$> visit v e
-  Op e name -> flip Op name <$> visit v e
-  IfThenElse c e e' -> IfThenElse <$> visit v c <*> visit v e <*> visit v e'
-  Constructor e name -> flip Constructor name <$> visit v e
-  Case es alts -> Case <$> mapM (visit v) es <*> mapM (visit v) alts
-  TypedValue c e t -> flip (TypedValue c) t <$> visit v e
-  Let w decs e -> Let w <$> mapM (visit v) decs <*> visit v e
-  e -> pure e
-
+-- | Translate a contextual function which operates on an abstract
+-- expr into one which operates on an expr.
+mapEF
+  :: Functor f
+  => (AbstractExpr a -> f (AbstractExpr a))
+  -> AnnExpr a
+  -> f (AnnExpr a)
+mapEF f (AnnExpr ss e) = AnnExpr ss <$> f e
 
 -- |
 -- Data type for expressions and terms
 -- This type doesn't operate on its own; its polymorphic parameter is
 -- used by 'AnnExpr' to create a self-referential data structure.
 --
-data AbstractExpr expr a
+data AbstractExpr a
   -- |
   -- A literal value
   --
-  = Literal (Literal (expr a))
+  = Literal (Literal (AnnExpr a))
   -- |
   -- A prefix -, will be desugared
   --
-  | UnaryMinus (expr a)
+  | UnaryMinus (AnnExpr a)
   -- |
   -- Binary operator application. During the rebracketing phase of desugaring, this data constructor
   -- will be removed.
   --
-  | BinaryNoParens (expr a) (expr a) (expr a)
+  | BinaryNoParens (AnnExpr a) (AnnExpr a) (AnnExpr a)
   -- |
   -- Explicit parentheses. During the rebracketing phase of desugaring, this data constructor
   -- will be removed.
@@ -801,73 +791,73 @@ data AbstractExpr expr a
   -- Note: although it seems this constructor is not used, it _is_ useful, since it prevents
   -- certain traversals from matching.
   --
-  | Parens (expr a)
+  | Parens (AnnExpr a)
   -- |
   -- An record property accessor expression (e.g. `obj.x` or `_.x`).
   -- Anonymous arguments will be removed during desugaring and expanded
   -- into a lambda that reads a property from a record.
   --
-  | Accessor PSString (expr a)
+  | Accessor PSString (AnnExpr a)
   -- |
   -- Partial record update
   --
-  | ObjectUpdate (expr a) [(PSString, (expr a))]
+  | ObjectUpdate (AnnExpr a) [(PSString, (AnnExpr a))]
   -- |
   -- Object updates with nested support: `x { foo { bar = e } }`
   -- Replaced during desugaring into a `Let` and nested `ObjectUpdate`s
   --
-  | ObjectUpdateNested (expr a) (PathTree (expr a))
+  | ObjectUpdateNested (AnnExpr a) (PathTree (AnnExpr a))
   -- |
   -- Function introduction
   --
-  | Abs (Binder' a) (expr a)
+  | Abs (Binder' a) (AnnExpr a)
   -- |
   -- Function application
   --
-  | App (expr a) (expr a)
+  | App (AnnExpr a) (AnnExpr a)
   -- |
   -- Variable
   --
-  | Var (expr a) (Qualified Ident)
+  | Var (AnnExpr a) (Qualified Ident)
   -- |
   -- An operator. This will be desugared into a function during the "operators"
   -- phase of desugaring.
   --
-  | Op (expr a) (Qualified (OpName 'ValueOpName))
+  | Op (AnnExpr a) (Qualified (OpName 'ValueOpName))
   -- |
   -- Conditional (if-then-else expression)
   --
-  | IfThenElse (expr a) (expr a) (expr a)
+  | IfThenElse (AnnExpr a) (AnnExpr a) (AnnExpr a)
   -- |
   -- A data constructor
   --
-  | Constructor (expr a) (Qualified (ProperName 'ConstructorName))
+  | Constructor (AnnExpr a) (Qualified (ProperName 'ConstructorName))
   -- |
   -- A case expression. During the case expansion phase of desugaring, top-level binders will get
   -- desugared into case expressions, hence the need for guards and multiple binders per branch here.
   --
-  | Case [expr a] [CaseAlternative' a]
+  | Case [AnnExpr a] [CaseAlternative' a]
   -- |
   -- A value with a type annotation
   --
-  | TypedValue Bool (expr a) SourceType
+  | TypedValue Bool (AnnExpr a) SourceType
   -- |
   -- A let binding
   --
-  | Let WhereProvenance [Declaration' a] (expr a)
+  | Let WhereProvenance [Declaration' a] (AnnExpr a)
   -- |
   -- A do-notation block
   --
-  | Do (Maybe ModuleName) [DoNotationElement' (expr a)]
+  | Do (Maybe ModuleName) [DoNotationElement' a]
   -- |
   -- An ado-notation block
   --
-  | Ado (Maybe ModuleName) [DoNotationElement' (expr a)] (expr a)
+  | Ado (Maybe ModuleName) [DoNotationElement' a] (AnnExpr a)
   -- |
   -- An application of a typeclass dictionary constructor. The value should be
   -- an ObjectLiteral.
   --
-  | TypeClassDictionaryConstructorApp (Qualified (ProperName 'ClassName)) (expr a)
+  | TypeClassDictionaryConstructorApp (Qualified (ProperName 'ClassName)) (AnnExpr a)
   -- |
   -- A placeholder for a type class dictionary to be inserted later. At the end of type checking, these
   -- placeholders will be replaced with actual expressions representing type classes dictionaries which
@@ -877,7 +867,7 @@ data AbstractExpr expr a
   --
   | TypeClassDictionary SourceConstraint
                         (M.Map (Maybe ModuleName) (M.Map (Qualified (ProperName 'ClassName)) (M.Map (Qualified Ident) (NEL.NonEmpty NamedDict))))
-                        [ErrorMessageHint' (expr a)]
+                        [ErrorMessageHint' (AnnExpr a)]
   -- |
   -- A typeclass dictionary accessor, the implementation is left unspecified until CoreFn desugaring.
   --
@@ -897,7 +887,7 @@ data AbstractExpr expr a
   -- |
   -- A value with source position information
   --
-  | PositionedValue [Comment] (expr a)
+  | PositionedValue [Comment] (AnnExpr a)
   deriving (Show, Functor, Foldable, Traversable)
 
 -- |
@@ -925,7 +915,7 @@ data CaseAlternative' a = CaseAlternative
     -- |
     -- The result expression or a collect of guarded expressions
     --
-  , caseAlternativeResult :: [Guarded' a]
+  , caseAlternativeResult :: [GuardedExpr' a]
   } deriving (Show, Functor, Foldable, Traversable)
 
 -- |
@@ -935,11 +925,11 @@ data DoNotationElement' a
   -- |
   -- A monadic value without a binder
   --
-  = DoNotationValue a
+  = DoNotationValue (AnnExpr a)
   -- |
   -- A monadic value with a binder
   --
-  | DoNotationBind (Binder' a) a
+  | DoNotationBind (Binder' a) (AnnExpr a)
   -- |
   -- A let statement, i.e. a pure value with a binder
   --
@@ -989,7 +979,7 @@ $(deriveJSON (defaultOptions { sumEncoding = ObjectWithSingleField }) ''ExportSo
 
 isTrueExpr :: AnnExpr a -> Bool
 isTrueExpr = go . eExpr where
-  go :: AbstractExpr AnnExpr a -> Bool
+  go :: AbstractExpr a -> Bool
   go (Literal (BooleanLiteral True)) = True
   go (Var _ (Qualified (Just (ModuleName [ProperName "Prelude"])) (Ident "otherwise"))) = True
   go (Var _ (Qualified (Just (ModuleName [ProperName "Data", ProperName "Boolean"])) (Ident "otherwise"))) = True
