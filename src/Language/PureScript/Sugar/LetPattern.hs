@@ -23,7 +23,7 @@ desugarLetPattern decl =
   let (f, _, _) = everywhereOnValues id replace id
   in f decl
   where
-  replace :: Expr -> Expr
+  replace :: Expr' -> Expr'
   replace (Let w ds e) = go w (partitionDecls ds) e
   replace other = other
 
@@ -33,11 +33,13 @@ desugarLetPattern decl =
      -- ^ Declarations to desugar
      -> Expr
      -- ^ The original let-in result expression
-     -> Expr
-  go _ [] e = e
+     -> Expr'
+  go _ [] e = eExpr e
   go w (Right ((pos, com), binder, boundE) : ds) e =
-    PositionedValue pos com $ Case [boundE] [CaseAlternative [binder] [MkUnguarded $ go w ds e]]
-  go w (Left ds:dss) e = Let w ds (go w dss e)
+    PositionedValue com
+      $ AnnExpr pos
+      $ Case [boundE] [CaseAlternative [binder] [MkUnguarded $ AnnExpr pos $ go w ds e]]
+  go w (Left ds:dss) e@(AnnExpr a _) = Let w ds (AnnExpr a $ go w dss e)
 
 partitionDecls :: [Declaration] -> [Either [Declaration] (SourceAnn, Binder, Expr)]
 partitionDecls = concatMap f . groupBy ((==) `on` isBoundValueDeclaration)

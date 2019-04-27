@@ -137,7 +137,7 @@ data SimpleErrorMessage' a
   | MissingNewtypeSuperclassInstance (Qualified (ProperName 'ClassName)) (Qualified (ProperName 'ClassName)) [SourceType]
   | UnverifiableSuperclassInstance (Qualified (ProperName 'ClassName)) (Qualified (ProperName 'ClassName)) [SourceType]
   | CannotFindDerivingType (ProperName 'TypeName)
-  | DuplicateLabel Label (Maybe a)
+  | DuplicateLabel Label (Maybe (AnnExpr a))
   | DuplicateValueDeclaration Ident
   | ArgListLengthsDiffer Ident
   | OverlappingArgNames (Maybe Ident)
@@ -146,7 +146,7 @@ data SimpleErrorMessage' a
   | ExpectedType SourceType SourceKind
   -- | constructor name, expected argument count, actual argument count
   | IncorrectConstructorArity (Qualified (ProperName 'ConstructorName)) Int Int
-  | ExprDoesNotHaveType a SourceType
+  | ExprDoesNotHaveType (AnnExpr a) SourceType
   | PropertyIsMissing Label
   | AdditionalProperty Label
   | TypeSynonymInstance
@@ -199,16 +199,16 @@ data SimpleErrorMessage' a
 -- | Error message hints, providing more detailed information about failure.
 data ErrorMessageHint' a
   = ErrorUnifyingTypes SourceType SourceType
-  | ErrorInExpression a
+  | ErrorInExpression (AnnExpr a)
   | ErrorInModule ModuleName
   | ErrorInInstance (Qualified (ProperName 'ClassName)) [SourceType]
   | ErrorInSubsumption SourceType SourceType
-  | ErrorCheckingAccessor a PSString
-  | ErrorCheckingType a SourceType
+  | ErrorCheckingAccessor (AnnExpr a) PSString
+  | ErrorCheckingType (AnnExpr a) SourceType
   | ErrorCheckingKind SourceType
   | ErrorCheckingGuard
-  | ErrorInferringType a
-  | ErrorInApplication a SourceType a
+  | ErrorInferringType (AnnExpr a)
+  | ErrorInApplication (AnnExpr a) SourceType (AnnExpr a)
   | ErrorInDataConstructor (ProperName 'ConstructorName)
   | ErrorInTypeConstructor (ProperName 'TypeName)
   | ErrorInBindingGroup (NEL.NonEmpty Ident)
@@ -867,7 +867,7 @@ data AbstractExpr a
   --
   | TypeClassDictionary SourceConstraint
                         (M.Map (Maybe ModuleName) (M.Map (Qualified (ProperName 'ClassName)) (M.Map (Qualified Ident) (NEL.NonEmpty NamedDict))))
-                        [ErrorMessageHint' (AnnExpr a)]
+                        [ErrorMessageHint' a]
   -- |
   -- A typeclass dictionary accessor, the implementation is left unspecified until CoreFn desugaring.
   --

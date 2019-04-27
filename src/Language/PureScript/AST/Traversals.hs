@@ -137,9 +137,6 @@ everywhereOnValuesTopDownM f g h = (f' <=< f, g' <=< g, h' <=< h)
   f' (BoundValueDeclaration sa b expr) = BoundValueDeclaration sa <$> (h' <=< h) b <*> (mapEF g' <=< mapEF g) expr
   f' other = f other
 
-  g'' :: Expr -> m Expr
-  g'' = mapEF g
-
   recur v = (mapEF g v >>= mapEF g')
 
   g' :: Expr' -> m Expr'

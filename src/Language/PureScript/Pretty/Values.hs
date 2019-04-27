@@ -139,12 +139,12 @@ prettyPrintDeclaration :: Int -> Declaration -> Box
 prettyPrintDeclaration d _ | d < 0 = ellipsis
 prettyPrintDeclaration d (TypeDeclaration td) =
   text (T.unpack (showIdent (tydeclIdent td)) ++ " :: ") <> typeAsBox d (tydeclType td)
-prettyPrintDeclaration d (ValueDecl _ ident _ [] [Guarded [] val]) =
+prettyPrintDeclaration d (ValueDecl _ ident _ [] [GuardedExpr [] val]) =
   text (T.unpack (showIdent ident) ++ " = ") <> prettyPrintValue (d - 1) val
 prettyPrintDeclaration d (BindingGroupDeclaration ds) =
   vsep 1 left (NEL.toList (fmap (prettyPrintDeclaration (d - 1) . toDecl) ds))
   where
-  toDecl ((sa, nm), t, e) = ValueDecl sa nm t [] [Guarded [] e]
+  toDecl ((sa, nm), t, e) = ValueDecl sa nm t [] [GuardedExpr [] e]
 prettyPrintDeclaration _ _ = internalError "Invalid argument to prettyPrintDeclaration"
 
 prettyPrintCaseAlternative :: Int -> CaseAlternative -> Box
@@ -153,26 +153,26 @@ prettyPrintCaseAlternative d (CaseAlternative binders result) =
   text (T.unpack (T.unwords (map prettyPrintBinderAtom binders))) <> prettyPrintResult result
   where
   prettyPrintResult :: [GuardedExpr] -> Box
-  prettyPrintResult [Guarded [] v] = text " -> " <> prettyPrintValue (d - 1) v
+  prettyPrintResult [GuardedExpr [] v] = text " -> " <> prettyPrintValue (d - 1) v
   prettyPrintResult gs =
     vcat left (map (prettyPrintGuardedValueSep (text " | ")) gs)
 
   prettyPrintGuardedValueSep :: Box -> GuardedExpr -> Box
-  prettyPrintGuardedValueSep _ (Guarded [] val) =
+  prettyPrintGuardedValueSep _ (GuardedExpr [] val) =
     text " -> " <> prettyPrintValue (d - 1) val
 
-  prettyPrintGuardedValueSep sep (Guarded [guard] val) =
+  prettyPrintGuardedValueSep sep (GuardedExpr [guard] val) =
     foldl1 before [ sep
                   , prettyPrintGuard guard
-                  , prettyPrintGuardedValueSep sep (Guarded [] val)
+                  , prettyPrintGuardedValueSep sep (GuardedExpr [] val)
                   ]
 
-  prettyPrintGuardedValueSep sep (Guarded (guard : guards) val) =
+  prettyPrintGuardedValueSep sep (GuardedExpr (guard : guards) val) =
     vcat left [ foldl1 before
                 [ sep
                 , prettyPrintGuard guard
                 ]
-              , prettyPrintGuardedValueSep (text " , ") (Guarded guards val)
+              , prettyPrintGuardedValueSep (text " , ") (GuardedExpr guards val)
               ]
 
   prettyPrintGuard (ConditionGuard cond) =

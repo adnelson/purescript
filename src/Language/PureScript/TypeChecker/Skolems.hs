@@ -51,12 +51,12 @@ skolemize ann ident sko scope = replaceTypeVars ident (Skolem ann ident sko scop
 -- | This function skolemizes type variables appearing in any type signatures or
 -- 'DeferredDictionary' placeholders. These type variables are the only places
 -- where scoped type variables can appear in expressions.
-skolemizeTypesInValue :: SourceAnn -> Text -> Int -> SkolemScope -> Expr -> Expr
+skolemizeTypesInValue :: SourceAnn -> Text -> Int -> SkolemScope -> Expr' -> Expr'
 skolemizeTypesInValue ann ident sko scope =
     runIdentity . onExpr'
   where
     onExpr' :: Expr' -> Identity Expr'
-    onExpr' = mapM _what
+    (_, onExpr', _, _, _) = everywhereWithContextOnValuesM [] defS onExpr onBinder defS defS
 
     onExpr :: [Text] -> Expr' -> Identity ([Text], Expr')
     onExpr sco (DeferredDictionary c ts)
@@ -89,24 +89,17 @@ skolemEscapeCheck expr@TypedValue{} =
     traverse_ (throwError . singleError) (toSkolemErrors expr)
   where
     toSkolemErrors :: Expr' -> [ErrorMessage]
-    toSkolemErrors e = do
-      let step e (scopes :: Set SkolemScope, used :: Maybe SourceSpan, errors :: [ErrorMessage]) = do
-            let ((scopes', used'), errors') = go (scopes, used) e
-            (scopes', used', errors <> errors')
-      let (_, _, errors) = foldr step (mempty, Nothing, []) e
-      errors
-    {-
     (_, toSkolemErrors, _, _, _) = everythingWithContextOnValues (mempty, Nothing) [] (<>) def go def def def
 
     def s _ = (s, [])
--}
+
     go :: (Set SkolemScope, Maybe SourceSpan)
-       -> Expr
+       -> Expr'
        -> ((Set SkolemScope, Maybe SourceSpan), [ErrorMessage])
-    go (scopes, _) (AnnExpr ss (PositionedValue _ _)) = ((scopes, Just ss), [])
-    go (scopes, ssUsed) val@(AnnExpr _ (TypedValue _ _ ty)) =
+    go (scopes, _) (PositionedValue _ e) = ((scopes, Just (eAnn e)), [])
+    go (scopes, ssUsed) e@(TypedValue _ (AnnExpr a _) ty) =
         ( (allScopes, ssUsed)
-        , [ ErrorMessage (maybe id ((:) . positionedError) ssUsed [ ErrorInExpression val ]) $
+        , [ ErrorMessage (maybe id ((:) . positionedError) ssUsed [ ErrorInExpression (AnnExpr a e) ]) $
               EscapedSkolem name (nonEmptySpan ssBound) ty
           | (ssBound, name, scope) <- collectSkolems ty
           , notMember scope allScopes

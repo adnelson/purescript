@@ -49,7 +49,7 @@ data ModeSing (mode :: Mode) where
 -- mode.
 type family Coercion (mode :: Mode) where
   -- When elaborating, we generate a coercion
-  Coercion 'Elaborate = Expr -> Expr
+  Coercion 'Elaborate = Expr' -> Expr'
   -- When we're not elaborating, we don't generate coercions
   Coercion 'NoElaborate = ()
 
@@ -63,7 +63,7 @@ subsumes
   :: (MonadError MultipleErrors m, MonadState CheckState m)
   => SourceType
   -> SourceType
-  -> m (Expr -> Expr)
+  -> m (Expr' -> Expr')
 subsumes ty1 ty2 =
   withErrorMessageHint (ErrorInSubsumption ty1 ty2) $
     subsumes' SElaborate ty1 ty2
@@ -100,7 +100,7 @@ subsumes' SElaborate (ConstrainedType _ con ty1) ty2 = do
   dicts <- getTypeClassDictionaries
   hints <- getHints
   elaborate <- subsumes' SElaborate ty1 ty2
-  let addDicts val = App val (TypeClassDictionary con dicts hints)
+  let addDicts val = (App val (AnnExpr undefined (TypeClassDictionary con dicts hints)))
   return (elaborate . addDicts)
 subsumes' mode (TypeApp _ f1 r1) (TypeApp _ f2 r2) | eqType f1 tyRecord && eqType f2 tyRecord = do
     let (common, ((ts1', r1'), (ts2', r2'))) = alignRowsWith (subsumes' SNoElaborate) r1 r2
