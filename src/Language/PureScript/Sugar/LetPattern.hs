@@ -37,7 +37,7 @@ desugarLetPattern = fmap replace
     AnnExpr pos $
       PositionedValue com $
         AnnExpr pos $
-          Case [boundE] [CaseAlternative [binder] [MkUnguarded $ go w ds e]]
+          Case [boundE] [CaseAlternative _what _what] --[binder] [MkUnguarded $ go w ds e]]
   go w (Left ds:dss) e = AnnExpr (eAnn e) $ Let w ds (go w dss e)
 
 partitionDecls :: [Declaration] -> [Either [Declaration] (SourceAnn, Binder, Expr)]

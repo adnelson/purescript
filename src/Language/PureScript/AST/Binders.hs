@@ -66,7 +66,7 @@ data Binder' a
   | TypedBinder SourceType (Binder' a)
   deriving (Show, Functor, Foldable, Traversable)
 
-class Visit inner outer where
+class Visit a f where
   -- "Visit" the binder in a monadic context, potentially altering it.
   visitM :: Monad m => (forall t. f t -> m (f t)) -> a -> m a
 
@@ -74,6 +74,9 @@ class Visit inner outer where
 
 class BinderLens f where
   binderLens :: Lens' (f a) (Binder' a)
+
+instance BinderLens Binder' where
+  binderLens = lens id (\_ a -> a)
 
 class HasBinders a where
   -- Apply a pure function to each binder.

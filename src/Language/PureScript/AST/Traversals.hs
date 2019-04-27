@@ -1,10 +1,13 @@
 -- |
 -- AST traversal helpers
 --
+{-# LANGUAGE FlexibleInstances #-}
 module Language.PureScript.AST.Traversals where
 
 import Prelude.Compat
 
+import Control.Monad.Identity
+{-
 import Control.Monad
 
 import Data.Foldable (fold)
@@ -14,14 +17,115 @@ import qualified Data.List.NonEmpty as NEL
 import qualified Data.Set as S
 import Control.Monad.State.Strict
 
+-}
+
 import Language.PureScript.AST.Binders
 import Language.PureScript.AST.Declarations
 import Language.PureScript.AST.Literals
 import Language.PureScript.AST.SourcePos (SourceSpan)
-import Language.PureScript.Kinds
-import Language.PureScript.Names
-import Language.PureScript.Traversals
-import Language.PureScript.Types
+-- import Language.PureScript.Kinds
+-- import Language.PureScript.Names
+-- import Language.PureScript.Traversals
+-- import Language.PureScript.Types
+
+data ExpressionVisitor m a
+  = VisitBinder (Binder' a -> m (Binder' a))
+  | VisitExpr (AbstractExpr AnnExpr a -> m (AbstractExpr AnnExpr a))
+  | VisitDecl (Declaration' a -> m (Declaration' a))
+  | VisitCaseAlt (CaseAlternative' a -> m (CaseAlternative' a))
+  | VisitDoElt (DoNotationElement' a -> m (DoNotationElement' a))
+  | Sequence (ExpressionVisitor m a) (ExpressionVisitor m a)
+
+
+class ExpressionTraverse f where
+  visit :: Monad m => ExpressionVisitor m e -> f e -> m (f e)
+
+instance ExpressionTraverse Binder' where
+  visit (VisitBinder f) binder = f binder
+  visit (Sequence v v') binder = visit v binder >>= visit v'
+  visit _ binder = pure binder
+
+instance ExpressionTraverse Guard' where
+  visit v g = case g of
+    PatternGuard binder a -> PatternGuard <$> visit v binder <*> visit v a
+    ConditionGuard a -> ConditionGuard <$> visit v a
+
+instance ExpressionTraverse ExprValueDeclaration where
+  visit v@(VisitBinder e) g@(ExprValueDeclaration vd) = case vd of
+    _ {- ValueDeclaration i n a vd -} -> pure g
+
+instance ExpressionTraverse Declaration' where
+  visit (VisitExpr e) g = case g of
+    _ -> pure g
+
+instance ExpressionTraverse AnnExpr where
+  visit v (AnnExpr a e) = AnnExpr a <$> visit v e
+
+instance ExpressionTraverse (AbstractExpr AnnExpr) where
+  visit v@(VisitExpr f) e' = f =<< case e' of -- (AnnExpr a e) = f =<< AnnExpr a <$> case e of
+    Literal lit -> Literal <$> case lit of
+      ArrayLiteral es -> ArrayLiteral <$> mapM (visit v) es
+      ObjectLiteral kvs -> ObjectLiteral <$> mapM (\(s, e) -> (s,) <$> visit v e) kvs
+      _ -> pure lit
+    UnaryMinus e -> UnaryMinus <$> visit v e
+    BinaryNoParens a b c -> BinaryNoParens <$> visit v a <*> visit v b <*> visit v c
+    Parens e -> Parens <$> visit v e
+    Accessor s e -> Accessor s <$> visit v e
+    ObjectUpdate e es -> ObjectUpdate <$> visit v e <*> mapM (\(f, e') -> (f,) <$> visit v e') es
+    ObjectUpdateNested e pt -> ObjectUpdateNested <$> visit v e <*> mapM (visit v) pt
+    Abs arg e -> Abs <$> visit v arg <*> visit v e
+    App e e' -> App <$> visit v e <*> visit v e'
+    Var e i -> flip Var i <$> visit v e
+    Op e name -> flip Op name <$> visit v e
+    IfThenElse c e e' -> IfThenElse <$> visit v c <*> visit v e <*> visit v e'
+    Constructor e name -> flip Constructor name <$> visit v e
+    Case es alts -> Case <$> mapM (visit v) es <*> mapM (visit v) alts
+    TypedValue c e t -> flip (TypedValue c) t <$> visit v e
+    Let w decs e -> Let w <$> mapM (visit v) decs <*> visit v e
+    e -> pure e
+
+  --   --- TODO
+  -- visit (VisitExpr f) e = f e
+  -- visit v (AnnExpr a e) = case e of
+  --   Case AnnExpr a <$> mapM (visit v) e
+
+instance ExpressionTraverse CaseAlternative' where
+  visit (VisitCaseAlt f) ca = f ca
+  visit v (CaseAlternative bs rs) =
+    CaseAlternative <$> mapM (visit v) bs <*> mapM (visit v) rs
+
+instance ExpressionTraverse Guarded' where
+  visit v (Guarded guards a) = Guarded <$> mapM (visit v) guards <*> visit v a
+
+instance ExpressionTraverse DoNotationElement' where
+  visit (VisitDoElt f) elt = case elt of
+    PositionedDoNotationElement a coms elt' -> do
+      -- TODO worried that this could infinite loop...
+      f =<< PositionedDoNotationElement a coms <$> f elt'
+    _ -> f elt
+  visit (VisitBinder f) (DoNotationBind b a) = f b >>= \b' -> pure (DoNotationBind b' a)
+  visit (VisitDecl f) (DoNotationLet decs) = DoNotationLet <$> mapM f decs
+  visit _ elt = pure elt
+{-
+
+everythingWithContextOnValues
+  :: forall s r
+   . s
+  -> r
+  -> (r -> r -> r)
+  -> (s -> Declaration       -> (s, r))
+  -> (s -> Expr'             -> (s, r))
+  -> (s -> Binder            -> (s, r))
+  -> (s -> CaseAlternative   -> (s, r))
+  -> (s -> DoNotationElement -> (s, r))
+  -> ( Declaration       -> r
+     , Expr'             -> r
+     , Binder            -> r
+     , CaseAlternative   -> r
+     , DoNotationElement -> r)
+everythingWithContextOnValues startState startValue folder decF exprF binderF caseAltF doF = do
+
+
 
 toStateF :: (s -> a -> (s, r)) -> a -> State s r
 toStateF f x = do
@@ -47,12 +151,15 @@ everythingWithContextOnValues
 everythingWithContextOnValues startState startValue folder decF exprF binderF caseAltF doF = do
   let
     exprF' :: Expr' -> r
---    exprF' e = snd $ foldr (\e' (s, r) -> let x = exprF s $ eExpr $ e' in _what) (startState, startValue) e
-
-
     exprF' expr = snd $ flip execState (startState, startValue) $
       flip traverse expr $ \(AnnExpr _ e) -> do
         modify $ \(s, r) -> let (s', r') = exprF s e in (s', folder r r')
+
+    decF' :: Declaration -> r
+    decF' dec = snd $ flip execState (startState, startValue) $
+      flip traverse dec $ \(AnnExpr _ e) -> do
+        modify $ \(s, r) -> let (s', r') = decF s e in (s', folder r r')
+
   (undefined, exprF', undefined, undefined, undefined)
   --   decF' :: Declaration -> r
   --   decF' d = snd $ foldr _what (startState, startValue) d
@@ -76,16 +183,27 @@ mapGuarded f g (Guarded guards rhs) =
   Guarded (fmap f guards) (g rhs)
 
 type Inner = AbstractExpr Expr
+-}
+
+-}
+
 
 everywhereOnValues
   :: (Declaration -> Declaration)
-  -> (Inner -> Inner)
+  -> (Expr -> Expr)
   -> (Binder -> Binder)
   -> ( Declaration -> Declaration
-     , Inner -> Inner
+     , Expr -> Expr
      , Binder -> Binder
      )
-everywhereOnValues f g h = (f', g', h')
+everywhereOnValues f g h = (declVisit, exprVisit, binderVisit)
+  where
+    declVisit = \dec -> runIdentity $ visit (VisitDecl (pure . f)) dec
+    exprVisit = \e -> runIdentity $ visit (VisitExpr (\e -> let fn = mapAnnExpr g in _what)) e
+    binderVisit = \b -> runIdentity $ visit (VisitBinder (pure . h)) b
+
+{-
+{-
   where
   wrap :: (AbstractExpr (Expr' a) -> AbstractExpr (Expr' a)) -> (Expr' a -> Expr' a)
   wrap f (Expr' ss e) = Expr' ss (f e)
@@ -738,5 +856,6 @@ overTypes f = let (_, f', _) = everywhereOnValues id g id in f'
   g (TypedValue checkTy val t) = TypedValue checkTy val (f t)
   g (TypeClassDictionary c sco hints) = TypeClassDictionary (mapConstraintArgs (fmap f) c) sco hints
   g other = other
+-}
 -}
 -}

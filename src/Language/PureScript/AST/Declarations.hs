@@ -40,19 +40,19 @@ import qualified Text.Parsec as P
 
 -- * Monomorphic types, which refer to expressions tagged with source locations
 type Expr = AnnExpr SourceSpan
-type Expr' = AbstractExpr Expr
-type Binder = Binder' Expr
-type CaseAlternative = CaseAlternative' Expr
-type DoNotationElement = DoNotationElement' Expr
-type Declaration = Declaration' Expr
-type GuardedExpr = Guarded' Expr
+type Expr' = AbstractExpr AnnExpr SourceSpan
+type Binder = Binder' SourceSpan
+type CaseAlternative = CaseAlternative' SourceSpan
+type DoNotationElement = DoNotationElement' SourceSpan
+type Declaration = Declaration' SourceSpan
+type GuardedExpr = Guarded' SourceSpan
 type Guard = Guard' SourceSpan
-type Module = Module' Expr
-type ValueDeclarationData e = ValueDeclarationData' e Expr
-type TypeInstanceBody = TypeInstanceBody' Expr
-type ErrorMessage = ErrorMessage' Expr
-type SimpleErrorMessage = SimpleErrorMessage' Expr
-type ErrorMessageHint = ErrorMessageHint' Expr
+type Module = Module' SourceSpan
+type ValueDeclarationData e = ValueDeclarationData' e SourceSpan
+type TypeInstanceBody = TypeInstanceBody' SourceSpan
+type ErrorMessage = ErrorMessage' SourceSpan
+type SimpleErrorMessage = SimpleErrorMessage' SourceSpan
+type ErrorMessageHint = ErrorMessageHint' SourceSpan
 
 -- | A map of locally-bound names in scope.
 type Context = [(Ident, SourceType)]
@@ -243,7 +243,7 @@ data ErrorMessage' a = ErrorMessage
 -- explicitly exported. If the export list is Nothing, everything is exported.
 --
 data Module' a = Module {
-  getModuleSourceSpan :: SourceSpan,
+  getModuleSourceSpan :: a,
   mComments :: [Comment],
   getModuleName :: ModuleName,
   getModuleDeclarations :: [Declaration' a],
@@ -447,20 +447,20 @@ isExplicit _ = False
 -- @identity :: forall a. a -> a@
 --
 -- In this example @identity@ is the identifier and @forall a. a -> a@ the type.
-data TypeDeclarationData = TypeDeclarationData
-  { tydeclSourceAnn :: !SourceAnn
+data TypeDeclarationData' a = TypeDeclarationData
+  { tydeclSourceAnn :: !(SourceAnn' a)
   , tydeclIdent :: !Ident
   , tydeclType :: !SourceType
-  } deriving (Show, Eq)
+  } deriving (Show, Eq, Functor, Foldable, Traversable)
 
-overTypeDeclaration :: (TypeDeclarationData -> TypeDeclarationData) -> Declaration' a -> Declaration' a
+overTypeDeclaration :: (TypeDeclarationData' a -> TypeDeclarationData' a) -> Declaration' a -> Declaration' a
 overTypeDeclaration f d = maybe d (TypeDeclaration . f) (getTypeDeclaration d)
 
-getTypeDeclaration :: Declaration' a -> Maybe TypeDeclarationData
+getTypeDeclaration :: Declaration' a -> Maybe (TypeDeclarationData' a)
 getTypeDeclaration (TypeDeclaration d) = Just d
 getTypeDeclaration _ = Nothing
 
-unwrapTypeDeclaration :: TypeDeclarationData -> (Ident, SourceType)
+unwrapTypeDeclaration :: TypeDeclarationData' a -> (Ident, SourceType)
 unwrapTypeDeclaration td = (tydeclIdent td, tydeclType td)
 
 -- | A value declaration assigns a name and potential binders, to an expression (or multiple guarded expressions).
@@ -469,22 +469,18 @@ unwrapTypeDeclaration td = (tydeclIdent td, tydeclType td)
 --
 -- In this example @double@ is the identifier, @x@ is a binder and @x + x@ is the expression.
 data ValueDeclarationData' expr a = ValueDeclarationData
-  { valdeclSourceAnn :: !SourceAnn
-  , valdeclIdent :: !Ident
+  { valdeclIdent :: !Ident
   -- ^ The declared value's name
   , valdeclName :: !NameKind
   -- ^ Whether or not this value is exported/visible
+  , valdeclSourceAnn :: !(a, [Comment])
   , valdeclBinders :: ![Binder' a]
   , valdeclExpression :: !expr
   } deriving (Show, Functor, Foldable, Traversable)
 
-instance (HasBinders e, HasBinders a) => HasBinders (ValueDeclarationData' e a) where
-  changeBindersM f (ValueDeclarationData a i n binders expr) =
-    ValueDeclarationData a i n <$> mapM f binders <*> changeBindersM f expr
-
-pattern ValueDecl :: SourceAnn -> Ident -> NameKind -> [Binder' a] -> [Guarded' a] -> Declaration' a
+pattern ValueDecl :: (a, [Comment]) -> Ident -> NameKind -> [Binder' a] -> [Guarded' a] -> Declaration' a
 pattern ValueDecl sann ident name binders expr
-  = ValueDeclaration (ExprValueDeclaration (ValueDeclarationData sann ident name binders expr))
+  = ValueDeclaration (ExprValueDeclaration (ValueDeclarationData ident name sann binders expr))
 
 -- |
 -- The data type of declarations
@@ -493,7 +489,7 @@ data Declaration' a
   -- |
   -- A data type declaration (data or newtype, name, arguments, data constructors)
   --
-  = DataDeclaration SourceAnn DataDeclType (ProperName 'TypeName) [(Text, Maybe SourceKind)] [(ProperName 'ConstructorName, [(Ident, SourceType)])]
+  = DataDeclaration (SourceAnn' a) DataDeclType (ProperName 'TypeName) [(Text, Maybe SourceKind)] [(ProperName 'ConstructorName, [(Ident, SourceType)])]
   -- |
   -- A minimal mutually recursive set of data type declarations
   --
@@ -501,57 +497,52 @@ data Declaration' a
   -- |
   -- A type synonym declaration (name, arguments, type)
   --
-  | TypeSynonymDeclaration SourceAnn (ProperName 'TypeName) [(Text, Maybe SourceKind)] SourceType
+  | TypeSynonymDeclaration (SourceAnn' a) (ProperName 'TypeName) [(Text, Maybe SourceKind)] SourceType
   -- |
   -- A type declaration for a value (name, ty)
   --
-  | TypeDeclaration {-# UNPACK #-} !TypeDeclarationData
+  | TypeDeclaration {-# UNPACK #-} !(TypeDeclarationData' a)
   -- |
   -- A value declaration (name, top-level binders, optional guard, value)
   --
   | ValueDeclaration {-# UNPACK #-} !(ExprValueDeclaration a)
   -- |
   -- A declaration paired with pattern matching in let-in expression (binder, optional guard, value)
-  | BoundValueDeclaration SourceAnn (Binder' a) a
+  | BoundValueDeclaration (SourceAnn' a) (Binder' a) (AnnExpr a)
   -- |
   -- A minimal mutually recursive set of value declarations
   --
-  | BindingGroupDeclaration (NEL.NonEmpty ((SourceAnn, Ident), NameKind, a))
+  | BindingGroupDeclaration (NEL.NonEmpty ((SourceAnn' a, Ident), NameKind, AnnExpr a))
   -- |
   -- A foreign import declaration (name, type)
   --
-  | ExternDeclaration SourceAnn Ident SourceType
+  | ExternDeclaration (SourceAnn' a) Ident SourceType
   -- |
   -- A data type foreign import (name, kind)
   --
-  | ExternDataDeclaration SourceAnn (ProperName 'TypeName) SourceKind
+  | ExternDataDeclaration (SourceAnn' a) (ProperName 'TypeName) SourceKind
   -- |
   -- A foreign kind import (name)
   --
-  | ExternKindDeclaration SourceAnn (ProperName 'KindName)
+  | ExternKindDeclaration (SourceAnn' a) (ProperName 'KindName)
   -- |
   -- A fixity declaration
   --
-  | FixityDeclaration SourceAnn (Either ValueFixity TypeFixity)
+  | FixityDeclaration (SourceAnn' a) (Either ValueFixity TypeFixity)
   -- |
   -- A module import (module name, qualified/unqualified/hiding, optional "qualified as" name)
   --
-  | ImportDeclaration SourceAnn ModuleName ImportDeclarationType (Maybe ModuleName)
+  | ImportDeclaration (SourceAnn' a) ModuleName ImportDeclarationType (Maybe ModuleName)
   -- |
   -- A type class declaration (name, argument, implies, member declarations)
   --
-  | TypeClassDeclaration SourceAnn (ProperName 'ClassName) [(Text, Maybe SourceKind)] [SourceConstraint] [FunctionalDependency] [Declaration' a]
+  | TypeClassDeclaration (SourceAnn' a) (ProperName 'ClassName) [(Text, Maybe SourceKind)] [SourceConstraint] [FunctionalDependency] [Declaration' a]
   -- |
   -- A type instance declaration (instance chain, chain index, name,
   -- dependencies, class name, instance types, member declarations)
   --
-  | TypeInstanceDeclaration SourceAnn [Ident] Integer Ident [SourceConstraint] (Qualified (ProperName 'ClassName)) [SourceType] (TypeInstanceBody' a)
+  | TypeInstanceDeclaration (SourceAnn' a) [Ident] Integer Ident [SourceConstraint] (Qualified (ProperName 'ClassName)) [SourceType] (TypeInstanceBody' a)
   deriving (Show, Functor, Foldable, Traversable)
-
-instance HasBinders a => HasBinders (Declaration' a) where
-  changeBindersM f (BoundValueDeclaration ann binder a) =
-    BoundValueDeclaration ann <$> f binder <*> changeBindersM f a
-  changeBindersM f decl = mapM (changeBindersM f) decl
 
 data ValueFixity = ValueFixity Fixity (Qualified (Either Ident (ProperName 'ConstructorName))) (OpName 'ValueOpName)
   deriving (Eq, Ord, Show)
@@ -559,10 +550,10 @@ data ValueFixity = ValueFixity Fixity (Qualified (Either Ident (ProperName 'Cons
 data TypeFixity = TypeFixity Fixity (Qualified (ProperName 'TypeName)) (OpName 'TypeOpName)
   deriving (Eq, Ord, Show)
 
-pattern ValueFixityDeclaration :: SourceAnn -> Fixity -> Qualified (Either Ident (ProperName 'ConstructorName)) -> OpName 'ValueOpName -> Declaration' a
+pattern ValueFixityDeclaration :: SourceAnn' a -> Fixity -> Qualified (Either Ident (ProperName 'ConstructorName)) -> OpName 'ValueOpName -> Declaration' a
 pattern ValueFixityDeclaration sa fixity name op = FixityDeclaration sa (Left (ValueFixity fixity name op))
 
-pattern TypeFixityDeclaration :: SourceAnn -> Fixity -> Qualified (ProperName 'TypeName) -> OpName 'TypeOpName -> Declaration' a
+pattern TypeFixityDeclaration :: (SourceAnn' a) -> Fixity -> Qualified (ProperName 'TypeName) -> OpName 'TypeOpName -> Declaration' a
 pattern TypeFixityDeclaration sa fixity name op = FixityDeclaration sa (Right (TypeFixity fixity name op))
 
 -- | The members of a type class instance declaration
@@ -586,7 +577,7 @@ traverseTypeInstanceBody :: (Applicative f) => ([Declaration' a] -> f [Declarati
 traverseTypeInstanceBody f (ExplicitInstance ds) = ExplicitInstance <$> f ds
 traverseTypeInstanceBody _ other = pure other
 
-declSourceAnn :: Declaration' a -> SourceAnn
+declSourceAnn :: Declaration' a -> SourceAnn' a
 declSourceAnn (DataDeclaration sa _ _ _ _) = sa
 declSourceAnn (DataBindingGroupDeclaration ds) = declSourceAnn (NEL.head ds)
 declSourceAnn (TypeSynonymDeclaration sa _ _ _) = sa
@@ -602,7 +593,7 @@ declSourceAnn (ImportDeclaration sa _ _ _) = sa
 declSourceAnn (TypeClassDeclaration sa _ _ _ _ _) = sa
 declSourceAnn (TypeInstanceDeclaration sa _ _ _ _ _ _ _) = sa
 
-declSourceSpan :: Declaration' a -> SourceSpan
+declSourceSpan :: Declaration' a -> a
 declSourceSpan = fst . declSourceAnn
 
 declName :: Declaration' a -> Maybe Name
@@ -701,38 +692,21 @@ flattenDecls = concatMap flattenOne
 -- |
 -- A guard is just a boolean-valued expression that appears alongside a set of binders
 --
-data Guard' a = ConditionGuard a
-              | PatternGuard (Binder' a) a
+data Guard' a = ConditionGuard (AnnExpr a)
+              | PatternGuard (Binder' a) (AnnExpr a)
               deriving (Show, Functor, Foldable, Traversable)
-
-instance HasBinders a => HasBinders (Guard' a) where
-  changeBindersM f (PatternGuard binder a) = PatternGuard <$> f binder <*> changeBindersM f a
-  changeBindersM f (ConditionGuard a) = ConditionGuard <$> changeBindersM f a
-
-instance Visit a Binder' => Visit (Guard' a) Binder' where
-  visitM f (PatternGuard binder a) = PatternGuard <$> f binder <*> visitM f a
-  visitM f (ConditionGuard a) = ConditionGuard <$> visitM f a
-
-instance Visit a AbstractExpr => Visit (Guard' a) AbstractExpr where
-  visitM f g = mapM (visitM f) g
-
-instance Visit a Declaration' => Visit (Guard' a) Declaration' where
-  visitM f g = mapM (visitM f) g
 
 -- |
 -- The right hand side of a binder in value declarations
 -- and case expressions.
-data Guarded' a = Guarded [Guard' a] a
+data Guarded' a = Guarded [Guard' a] (AnnExpr a)
                   deriving (Show, Functor, Foldable, Traversable)
-
-instance HasBinders a => HasBinders (Guarded' a) where
-  changeBindersM f (Guarded guards a) = Guarded <$> mapM (changeBindersM f) guards <*> changeBindersM f a
 
 -- | Apply a function to the expression in a guard
 -- alterExprInGuard :: (AnnExpr a -> AnnExpr a) -> GuardedAnnExpr a -> GuardedAnnExpr a
 -- alterExprInGuard f (GuardedExpr guards e) = GuardedExpr (fmap f <$> guards) (f e)
 
-pattern MkUnguarded :: a -> Guarded' a
+pattern MkUnguarded :: AnnExpr a -> Guarded' a
 pattern MkUnguarded e = Guarded [] e
 
 newtype ExprValueDeclaration a =
@@ -740,64 +714,86 @@ newtype ExprValueDeclaration a =
   deriving (Show)
 
 instance Functor ExprValueDeclaration where
-  fmap f (ExprValueDeclaration valdef) = do -- (ValueDeclarationData' {..})) =
-    ExprValueDeclaration valdef {
-      valdeclBinders = fmap (fmap f) (valdeclBinders valdef),
-      valdeclExpression = fmap (fmap f) (valdeclExpression valdef)
-      }
+  fmap f (ExprValueDeclaration (ValueDeclarationData ident name (a, coms) bs es)) = do
+    ExprValueDeclaration
+      $ ValueDeclarationData ident name (f a, coms) (fmap f <$> bs) (fmap f <$> es)
 
 instance Foldable ExprValueDeclaration where
   foldMap f (ExprValueDeclaration valdef) = mconcat $
     map (foldMap f) (valdeclBinders valdef)
     <> map (foldMap f) (valdeclExpression valdef)
 
+swap :: (a, b) -> (b, a)
+swap (a, b) = (b, a)
+
 instance Traversable ExprValueDeclaration where
-  traverse f (ExprValueDeclaration (ValueDeclarationData a i n bs es)) =
-    fmap ExprValueDeclaration $
-      ValueDeclarationData a i n
-        <$> traverse (traverse f) bs
+  traverse f (ExprValueDeclaration (ValueDeclarationData i n a bs es)) =
+    fmap ExprValueDeclaration
+      $ ValueDeclarationData i n
+        <$> (swap <$> traverse f (swap a))
+        <*> traverse (traverse f) bs
         <*> traverse (traverse f) es
 
 -- | An expression holding some annotation and another expression inside it
-data AnnExpr a = AnnExpr { eAnn :: a, eExpr :: (AbstractExpr (AnnExpr a)) }
+-- The internal type is left polymorphic. It can be used to attach additional
+-- information to the expression tree. For example, source position or type.
+data AnnExpr a = AnnExpr { eAnn :: a, eExpr :: AbstractExpr AnnExpr a }
   deriving (Show)
-
-instance HasBinders a => HasBinders (AnnExpr a) where
-  changeBindersM f (AnnExpr ann a) = AnnExpr ann <$> changeBindersM f a
 
 -- | AnnExpr is a functor where the polymorphic type is the annotation.
 instance Functor AnnExpr where
-  fmap f (AnnExpr a e) = AnnExpr (f a) (fmap f <$> e)
+  fmap f (AnnExpr a e) = AnnExpr (f a) (fmap f e)
 
 instance Foldable AnnExpr where
-  foldMap f (AnnExpr a e) = f a <> foldMap (foldMap f) e
+  foldMap f (AnnExpr a e) = f a <> foldMap f e
 
 instance Traversable AnnExpr where
-  traverse f (AnnExpr a e) = AnnExpr <$> f a <*> traverse (traverse f) e
+  traverse f (AnnExpr a e) = AnnExpr <$> f a <*> traverse f e
 
 -- | Translate a function which operates on an abstract expr into one which operates on an expr.
-mapAnnExpr :: (AbstractExpr (AnnExpr a) -> AbstractExpr (AnnExpr a)) -> (AnnExpr a -> AnnExpr a)
+mapAnnExpr :: (AbstractExpr AnnExpr a -> AbstractExpr AnnExpr a) -> (AnnExpr a -> AnnExpr a)
 mapAnnExpr f (AnnExpr ss e) = AnnExpr ss (f e)
+
+mapAbsExpr :: (AnnExpr a -> AnnExpr a) -> AbstractExpr AnnExpr a -> AbstractExpr AnnExpr a
+mapAbsExpr f = \case
+  Literal lit -> Literal lit
+  UnaryMinus e -> UnaryMinus (f e)
+  BinaryNoParens a b c -> BinaryNoParens (f a) (f b) (f c)
+  Parens e -> Parens (f e)
+  Accessor s e -> Accessor s <$> visit v e
+  ObjectUpdate e es -> ObjectUpdate <$> visit v e <*> mapM (\(f, e') -> (f,) <$> visit v e') es
+  ObjectUpdateNested e pt -> ObjectUpdateNested <$> visit v e <*> mapM (visit v) pt
+  Abs arg e -> Abs <$> visit v arg <*> visit v e
+  App e e' -> App <$> visit v e <*> visit v e'
+  Var e i -> flip Var i <$> visit v e
+  Op e name -> flip Op name <$> visit v e
+  IfThenElse c e e' -> IfThenElse <$> visit v c <*> visit v e <*> visit v e'
+  Constructor e name -> flip Constructor name <$> visit v e
+  Case es alts -> Case <$> mapM (visit v) es <*> mapM (visit v) alts
+  TypedValue c e t -> flip (TypedValue c) t <$> visit v e
+  Let w decs e -> Let w <$> mapM (visit v) decs <*> visit v e
+  e -> pure e
+
 
 -- |
 -- Data type for expressions and terms
--- The internal type is left polymorphic. It can be used to attach additional
--- information to the expression tree. For example, source position or type.
+-- This type doesn't operate on its own; its polymorphic parameter is
+-- used by 'AnnExpr' to create a self-referential data structure.
 --
-data AbstractExpr a
+data AbstractExpr expr a
   -- |
   -- A literal value
   --
-  = Literal (Literal a)
+  = Literal (Literal (expr a))
   -- |
   -- A prefix -, will be desugared
   --
-  | UnaryMinus a
+  | UnaryMinus (expr a)
   -- |
   -- Binary operator application. During the rebracketing phase of desugaring, this data constructor
   -- will be removed.
   --
-  | BinaryNoParens a a a
+  | BinaryNoParens (expr a) (expr a) (expr a)
   -- |
   -- Explicit parentheses. During the rebracketing phase of desugaring, this data constructor
   -- will be removed.
@@ -805,73 +801,73 @@ data AbstractExpr a
   -- Note: although it seems this constructor is not used, it _is_ useful, since it prevents
   -- certain traversals from matching.
   --
-  | Parens a
+  | Parens (expr a)
   -- |
   -- An record property accessor expression (e.g. `obj.x` or `_.x`).
   -- Anonymous arguments will be removed during desugaring and expanded
   -- into a lambda that reads a property from a record.
   --
-  | Accessor PSString a
+  | Accessor PSString (expr a)
   -- |
   -- Partial record update
   --
-  | ObjectUpdate a [(PSString, a)]
+  | ObjectUpdate (expr a) [(PSString, (expr a))]
   -- |
   -- Object updates with nested support: `x { foo { bar = e } }`
   -- Replaced during desugaring into a `Let` and nested `ObjectUpdate`s
   --
-  | ObjectUpdateNested a (PathTree a)
+  | ObjectUpdateNested (expr a) (PathTree (expr a))
   -- |
   -- Function introduction
   --
-  | Abs (Binder' a) a
+  | Abs (Binder' a) (expr a)
   -- |
   -- Function application
   --
-  | App a a
+  | App (expr a) (expr a)
   -- |
   -- Variable
   --
-  | Var a (Qualified Ident)
+  | Var (expr a) (Qualified Ident)
   -- |
   -- An operator. This will be desugared into a function during the "operators"
   -- phase of desugaring.
   --
-  | Op a (Qualified (OpName 'ValueOpName))
+  | Op (expr a) (Qualified (OpName 'ValueOpName))
   -- |
   -- Conditional (if-then-else expression)
   --
-  | IfThenElse a a a
+  | IfThenElse (expr a) (expr a) (expr a)
   -- |
   -- A data constructor
   --
-  | Constructor a (Qualified (ProperName 'ConstructorName))
+  | Constructor (expr a) (Qualified (ProperName 'ConstructorName))
   -- |
   -- A case expression. During the case expansion phase of desugaring, top-level binders will get
   -- desugared into case expressions, hence the need for guards and multiple binders per branch here.
   --
-  | Case [a] [CaseAlternative' a]
+  | Case [expr a] [CaseAlternative' a]
   -- |
   -- A value with a type annotation
   --
-  | TypedValue Bool a SourceType
+  | TypedValue Bool (expr a) SourceType
   -- |
   -- A let binding
   --
-  | Let WhereProvenance [Declaration' a] a
+  | Let WhereProvenance [Declaration' a] (expr a)
   -- |
   -- A do-notation block
   --
-  | Do (Maybe ModuleName) [DoNotationElement' a]
+  | Do (Maybe ModuleName) [DoNotationElement' (expr a)]
   -- |
   -- An ado-notation block
   --
-  | Ado (Maybe ModuleName) [DoNotationElement' a] a
+  | Ado (Maybe ModuleName) [DoNotationElement' (expr a)] (expr a)
   -- |
   -- An application of a typeclass dictionary constructor. The value should be
   -- an ObjectLiteral.
   --
-  | TypeClassDictionaryConstructorApp (Qualified (ProperName 'ClassName)) a
+  | TypeClassDictionaryConstructorApp (Qualified (ProperName 'ClassName)) (expr a)
   -- |
   -- A placeholder for a type class dictionary to be inserted later. At the end of type checking, these
   -- placeholders will be replaced with actual expressions representing type classes dictionaries which
@@ -881,7 +877,7 @@ data AbstractExpr a
   --
   | TypeClassDictionary SourceConstraint
                         (M.Map (Maybe ModuleName) (M.Map (Qualified (ProperName 'ClassName)) (M.Map (Qualified Ident) (NEL.NonEmpty NamedDict))))
-                        [ErrorMessageHint' a]
+                        [ErrorMessageHint' (expr a)]
   -- |
   -- A typeclass dictionary accessor, the implementation is left unspecified until CoreFn desugaring.
   --
@@ -901,20 +897,8 @@ data AbstractExpr a
   -- |
   -- A value with source position information
   --
-  | PositionedValue [Comment] a
+  | PositionedValue [Comment] (expr a)
   deriving (Show, Functor, Foldable, Traversable)
-
-instance HasBinders a => HasBinders (AbstractExpr a) where
-  changeBindersM f (Abs binder a) = Abs <$> f binder <*> changeBindersM f a
-  changeBindersM f expr = mapM (changeBindersM f) expr
-
--- class HasExpressions a where
---   -- Apply a pure function to each expression.
---   changeExprs :: (forall t. Binder' t -> Binder' t) -> a -> a
---   changeExprs f = runIdentity . changeExprsM (pure . f)
-
---   -- "Visit" the expression in a monadic context, potentially altering it.
---   changeExprsM :: Monad m => (forall t. Binder' t -> m (Binder' t)) -> a -> m a
 
 -- |
 -- Metadata that tells where a let binding originated
@@ -944,12 +928,6 @@ data CaseAlternative' a = CaseAlternative
   , caseAlternativeResult :: [Guarded' a]
   } deriving (Show, Functor, Foldable, Traversable)
 
-instance HasBinders a => HasBinders (CaseAlternative' a) where
-  changeBindersM f ca = do
-    CaseAlternative
-      <$> mapM f (caseAlternativeBinders ca)
-      <*> mapM (changeBindersM f) (caseAlternativeResult ca)
-
 -- |
 -- A statement in a do-notation block
 --
@@ -972,10 +950,6 @@ data DoNotationElement' a
   | PositionedDoNotationElement a [Comment] (DoNotationElement' a)
   deriving (Show, Functor, Foldable, Traversable)
 
-instance HasBinders a => HasBinders (DoNotationElement' a) where
-  changeBindersM f = \case
-    DoNotationBind binder a -> DoNotationBind <$> f binder <*> changeBindersM f a
-    element -> mapM (changeBindersM f) element
 
 -- For a record update such as:
 --
@@ -1015,7 +989,7 @@ $(deriveJSON (defaultOptions { sumEncoding = ObjectWithSingleField }) ''ExportSo
 
 isTrueExpr :: AnnExpr a -> Bool
 isTrueExpr = go . eExpr where
-  go :: AbstractExpr (AnnExpr a) -> Bool
+  go :: AbstractExpr AnnExpr a -> Bool
   go (Literal (BooleanLiteral True)) = True
   go (Var _ (Qualified (Just (ModuleName [ProperName "Prelude"])) (Ident "otherwise"))) = True
   go (Var _ (Qualified (Just (ModuleName [ProperName "Data", ProperName "Boolean"])) (Ident "otherwise"))) = True
