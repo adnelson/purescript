@@ -54,6 +54,12 @@ type ErrorMessage = ErrorMessage' SourceSpan
 type SimpleErrorMessage = SimpleErrorMessage' SourceSpan
 type ErrorMessageHint = ErrorMessageHint' SourceSpan
 
+-- | Adds a "null" source span to convert an unannotated expression
+-- into an annotated one. This is used to annotate expressions generated
+-- during type checking.
+withNullSource :: Expr' -> Expr
+withNullSource = AnnExpr nullSourceSpan
+
 -- | A map of locally-bound names in scope.
 type Context = [(Ident, SourceType)]
 
@@ -767,8 +773,10 @@ mapEF f (AnnExpr ss e) = AnnExpr ss <$> f e
 
 -- |
 -- Data type for expressions and terms
--- This type doesn't operate on its own; its polymorphic parameter is
--- used by 'AnnExpr' to create a self-referential data structure.
+--
+-- This type provides the details of how an expression is structured, while
+-- the 'AnnExpr' type adds "extra information" (aka an annotation) via
+-- the polymorphic parameter 'a' which appears throughout these types.
 --
 data AbstractExpr a
   -- |

@@ -12,6 +12,7 @@ import Control.Monad (when)
 import Control.Monad.Error.Class (MonadError(..))
 import Control.Monad.State.Class (MonadState(..))
 
+import Data.Map
 import Data.Foldable (for_)
 import Data.List (uncons)
 import Data.List.Ordered (minusBy')
@@ -21,6 +22,8 @@ import Language.PureScript.AST
 import Language.PureScript.Crash
 import Language.PureScript.Environment
 import Language.PureScript.Errors
+import Language.PureScript.Names
+import Language.PureScript.TypeClassDictionaries
 import Language.PureScript.TypeChecker.Monad
 import Language.PureScript.TypeChecker.Skolems
 import Language.PureScript.TypeChecker.Unify
@@ -49,7 +52,7 @@ data ModeSing (mode :: Mode) where
 -- mode.
 type family Coercion (mode :: Mode) where
   -- When elaborating, we generate a coercion
-  Coercion 'Elaborate = Expr' -> Expr'
+  Coercion 'Elaborate = Expr -> Expr
   -- When we're not elaborating, we don't generate coercions
   Coercion 'NoElaborate = ()
 
@@ -63,7 +66,7 @@ subsumes
   :: (MonadError MultipleErrors m, MonadState CheckState m)
   => SourceType
   -> SourceType
-  -> m (Expr' -> Expr')
+  -> m (Expr -> Expr)
 subsumes ty1 ty2 =
   withErrorMessageHint (ErrorInSubsumption ty1 ty2) $
     subsumes' SElaborate ty1 ty2
@@ -99,8 +102,15 @@ subsumes' mode ty1 (KindedType _ ty2 _) =
 subsumes' SElaborate (ConstrainedType _ con ty1) ty2 = do
   dicts <- getTypeClassDictionaries
   hints <- getHints
-  elaborate <- subsumes' SElaborate ty1 ty2
-  let addDicts val = (App val (AnnExpr undefined (TypeClassDictionary con dicts hints)))
+  elaborate :: Expr -> Expr <- subsumes' SElaborate ty1 ty2
+  let
+    -- TODO Should the annotation should be duplicated here? If it
+    -- just contains source information that's fine, but if it
+    -- contains type information then the annotation on the first
+    -- argument to `App` should be different from the outer annotation.
+    addDicts :: Expr -> Expr
+    addDicts e@(AnnExpr a e') =
+      AnnExpr a (App e (AnnExpr a (TypeClassDictionary con dicts hints)))
   return (elaborate . addDicts)
 subsumes' mode (TypeApp _ f1 r1) (TypeApp _ f2 r2) | eqType f1 tyRecord && eqType f2 tyRecord = do
     let (common, ((ts1', r1'), (ts2', r2'))) = alignRowsWith (subsumes' SNoElaborate) r1 r2
