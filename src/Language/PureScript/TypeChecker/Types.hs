@@ -71,26 +71,6 @@ data BindingGroupType
 -- | The result of a successful type check.
 data TypedValue' = TypedValue' Bool Expr SourceType
 
-tvType :: TypedValue' -> SourceType
-tvType (TypedValue' _ _ t) = t
-
-{-
-data TypedExpr = TypedExpr (Expr'
-  = Node Bool SourceSpan SourceType (Expr' TypedExpr)
-  | Leaf SourceSpan SourceType
-
-teSourceSpan :: TypedExpr -> SourceSpan
-teSourceSpan (Node _ sspan _ _) = sspan
-teSourceSpan (Leaf sspan _) = sspan
-
-unwrapTypedExpr :: TypedExpr -> TypedValue'
-unwrapTypedExpr (Node check_ _ type_ expr) = do
-  TypedValue' check_ (teSourceSpan <$> expr) type_
--}
---  TypedValue' check
--- unwrapTypedValue :: TypedValue' -> (Bool, Expr, SourceType)
--- unwrapTypedValue (T
-
 -- | Convert an type checked value into an expression.
 tvToExpr :: TypedValue' -> Expr
 tvToExpr (TypedValue' c e t) = TypedValue c e t
@@ -318,7 +298,6 @@ instantiatePolyTypeWithUnknowns val (ConstrainedType _ con ty) = do
    instantiatePolyTypeWithUnknowns (App val (TypeClassDictionary con dicts hints)) ty
 instantiatePolyTypeWithUnknowns val ty = return (val, ty)
 
-
 -- | Infer a type for a value, rethrowing any error to provide a more useful error message
 infer
   :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
@@ -332,7 +311,7 @@ infer'
    . (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
   => Expr
   -> m TypedValue'
-infer' v@(Literal sspan (NumericLiteral (Left _))) = return $ TypedValue' True v tyInt
+infer' v@(Literal _ (NumericLiteral (Left _))) = return $ TypedValue' True v tyInt
 infer' v@(Literal _ (NumericLiteral (Right _))) = return $ TypedValue' True v tyNumber
 infer' v@(Literal _ (StringLiteral _)) = return $ TypedValue' True v tyString
 infer' v@(Literal _ (CharLiteral _)) = return $ TypedValue' True v tyChar
@@ -388,13 +367,13 @@ infer' (Abs binder ret)
   | VarBinder ss arg <- binder = do
       ty <- freshType
       withBindingGroupVisible $ bindLocalVariables [(arg, ty, Defined)] $ do
-        body <- infer' ret
-        (body', bodyTy') <- instantiatePolyTypeWithUnknowns (tvToExpr body) (tvType body)
+        body@(TypedValue' _ _ bodyTy) <- infer' ret
+        (body', bodyTy') <- instantiatePolyTypeWithUnknowns (tvToExpr body) bodyTy
         return $ TypedValue' True (Abs (VarBinder ss arg) body') (function ty bodyTy')
   | otherwise = internalError "Binder was not desugared"
 infer' (App f arg) = do
-  f' <- infer f
-  (ret, app) <- checkFunctionApplication (tvToExpr f') (tvType f') arg
+  f'@(TypedValue' _ _ ft) <- infer f
+  (ret, app) <- checkFunctionApplication (tvToExpr f') ft arg
   return $ TypedValue' True app ret
 infer' (Var ss var) = do
   checkVisibility var
@@ -418,15 +397,15 @@ infer' (Case vals binders) = do
   return $ TypedValue' True (Case vals' binders') ret
 infer' (IfThenElse cond th el) = do
   cond' <- tvToExpr <$> check cond tyBoolean
-  th' <- infer th
-  el' <- infer el
-  (th'', thTy') <- instantiatePolyTypeWithUnknowns (tvToExpr th') (tvType th')
-  (el'', elTy') <- instantiatePolyTypeWithUnknowns (tvToExpr el') (tvType el')
+  th'@(TypedValue' _ _ thTy) <- infer th
+  el'@(TypedValue' _ _ elTy) <- infer el
+  (th'', thTy') <- instantiatePolyTypeWithUnknowns (tvToExpr th') thTy
+  (el'', elTy') <- instantiatePolyTypeWithUnknowns (tvToExpr el') elTy
   unifyTypes thTy' elTy'
   return $ TypedValue' True (IfThenElse cond' th'' el'') thTy'
 infer' (Let w ds val) = do
-  (ds', tv) <- inferLetBinding [] ds val infer
-  return $ TypedValue' True (Let w ds' (tvToExpr tv)) (tvType tv)
+  (ds', tv@(TypedValue' _ _ valTy)) <- inferLetBinding [] ds val infer
+  return $ TypedValue' True (Let w ds' (tvToExpr tv)) valTy
 infer' (DeferredDictionary className tys) = do
   dicts <- getTypeClassDictionaries
   hints <- getHints
@@ -450,7 +429,6 @@ infer' (PositionedValue pos c val) = warnAndRethrowWithPositionTC pos $ do
   TypedValue' t v ty <- infer' val
   return $ TypedValue' t (PositionedValue pos c v) ty
 infer' v = internalError $ "Invalid argument to infer: " ++ show v
-
 
 inferLetBinding
   :: (MonadSupply m, MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
@@ -619,8 +597,8 @@ checkGuardedRhs (GuardedExpr (ConditionGuard cond : guards) rhs) ret = do
   GuardedExpr guards' rhs' <- checkGuardedRhs (GuardedExpr guards rhs) ret
   return $ GuardedExpr (ConditionGuard (tvToExpr cond') : guards') rhs'
 checkGuardedRhs (GuardedExpr (PatternGuard binder expr : guards) rhs) ret = do
-  tv <- infer expr
-  variables <- inferBinder (tvType tv) binder
+  tv@(TypedValue' _ _ ty) <- infer expr
+  variables <- inferBinder ty binder
   GuardedExpr guards' rhs' <- bindLocalVariables [ (name, bty, Defined)
                                                  | (name, bty) <- M.toList variables
                                                  ] $
@@ -662,9 +640,9 @@ check' val t@(ConstrainedType _ con@(Constraint _ (Qualified _ (ProperName class
   val' <- withBindingGroupVisible $ withTypeClassDictionaries dicts $ check val ty
   return $ TypedValue' True (Abs (VarBinder nullSourceSpan dictName) (tvToExpr val')) t
 check' val u@(TUnknown _ _) = do
-  val' <- infer val
+  val'@(TypedValue' _ _ ty) <- infer val
   -- Don't unify an unknown with an inferred polytype
-  (val'', ty') <- instantiatePolyTypeWithUnknowns (tvToExpr val') (tvType val')
+  (val'', ty') <- instantiatePolyTypeWithUnknowns (tvToExpr val') ty
   unifyTypes ty' u
   return $ TypedValue' True val'' ty'
 check' v@(Literal _ (NumericLiteral (Left _))) t | t == tyInt =
@@ -688,8 +666,8 @@ check' (Abs binder ret) ty@(TypeApp _ (TypeApp _ t argTy) retTy)
       return $ TypedValue' True (Abs (VarBinder ss arg) (tvToExpr ret')) ty
   | otherwise = internalError "Binder was not desugared"
 check' (App f arg) ret = do
-  f' <- infer f
-  (retTy, app) <- checkFunctionApplication (tvToExpr f') (tvType f') arg
+  f'@(TypedValue' _ _ ft) <- infer f
+  (retTy, app) <- checkFunctionApplication (tvToExpr f') ft arg
   elaborate <- subsumes retTy ret
   return $ TypedValue' True (elaborate app) ret
 check' v@(Var _ var) ty = do
@@ -802,9 +780,9 @@ checkProperties expr ps row lax = convert <$> go ps (toRowPair <$> ts') r' where
   go ((p,v):ps') ts r =
     case lookup (Label p) ts of
       Nothing -> do
-        v' <- infer v
+        v'@(TypedValue' _ _ ty) <- infer v
         rest <- freshType
-        unifyTypes r (srcRCons (Label p) (tvType v') rest)
+        unifyTypes r (srcRCons (Label p) ty rest)
         ps'' <- go ps' ts rest
         return $ (p, v') : ps''
       Just ty -> do
@@ -863,12 +841,12 @@ checkFunctionApplication' fn (ConstrainedType _ con fnTy) arg = do
 checkFunctionApplication' fn fnTy dict@TypeClassDictionary{} =
   return (fnTy, App fn dict)
 checkFunctionApplication' fn u arg = do
-  tv <- do
+  tv@(TypedValue' _ _ ty) <- do
     TypedValue' _ arg' t <- infer arg
     (arg'', t') <- instantiatePolyTypeWithUnknowns arg' t
     return $ TypedValue' True arg'' t'
   ret <- freshType
-  unifyTypes u (function (tvType tv) ret)
+  unifyTypes u (function ty ret)
   return (ret, App fn (tvToExpr tv))
 
 -- |

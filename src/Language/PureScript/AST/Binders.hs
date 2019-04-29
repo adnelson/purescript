@@ -4,8 +4,6 @@
 module Language.PureScript.AST.Binders where
 
 import Prelude.Compat
-import Control.Monad.Identity (runIdentity)
-import Lens.Micro.Platform
 
 import Language.PureScript.AST.SourcePos
 import Language.PureScript.AST.Literals
