@@ -104,10 +104,10 @@ subsumes' SElaborate (ConstrainedType _ con ty1) ty2 = do
   hints <- getHints
   elaborate :: Expr -> Expr <- subsumes' SElaborate ty1 ty2
   let
-    -- TODO Should the annotation should be duplicated here? If it
-    -- just contains source information that's fine, but if it
-    -- contains type information then the annotation on the first
-    -- argument to `App` should be different from the outer annotation.
+    -- Note that the annotation here is being duplicated; this is fine
+    -- since it's just source position information, but if it contains
+    -- e.g. type information then the annotation on the first argument to
+    -- `App` should be different from the outer annotation.
     addDicts :: Expr -> Expr
     addDicts e@(AnnExpr a e') =
       AnnExpr a (App e (AnnExpr a (TypeClassDictionary con dicts hints)))

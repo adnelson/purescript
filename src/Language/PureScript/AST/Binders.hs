@@ -1,11 +1,11 @@
 -- |
 -- Case binders
 --
+{-# LANGUAGE DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
 module Language.PureScript.AST.Binders where
 
 import Prelude.Compat
 
-import Language.PureScript.AST.SourcePos
 import Language.PureScript.AST.Literals
 import Language.PureScript.Names
 import Language.PureScript.Comments
@@ -14,7 +14,7 @@ import Language.PureScript.Types
 -- |
 -- Data type for binders
 --
-data Binder
+data Binder' a
   -- |
   -- Wildcard binder
   --
@@ -22,25 +22,25 @@ data Binder
   -- |
   -- A binder which matches a literal
   --
-  | LiteralBinder SourceSpan (Literal Binder)
+  | LiteralBinder a (Literal (Binder' a))
   -- |
   -- A binder which binds an identifier
   --
-  | VarBinder SourceSpan Ident
+  | VarBinder a Ident
   -- |
   -- A binder which matches a data constructor
   --
-  | ConstructorBinder SourceSpan (Qualified (ProperName 'ConstructorName)) [Binder]
+  | ConstructorBinder a (Qualified (ProperName 'ConstructorName)) [Binder' a]
   -- |
   -- A operator alias binder. During the rebracketing phase of desugaring,
   -- this data constructor will be removed.
   --
-  | OpBinder SourceSpan (Qualified (OpName 'ValueOpName))
+  | OpBinder a (Qualified (OpName 'ValueOpName))
   -- |
   -- Binary operator application. During the rebracketing phase of desugaring,
   -- this data constructor will be removed.
   --
-  | BinaryNoParensBinder Binder Binder Binder
+  | BinaryNoParensBinder (Binder' a) (Binder' a) (Binder' a)
   -- |
   -- Explicit parentheses. During the rebracketing phase of desugaring, this
   -- data constructor will be removed.
@@ -48,20 +48,20 @@ data Binder
   -- Note: although it seems this constructor is not used, it _is_ useful,
   -- since it prevents certain traversals from matching.
   --
-  | ParensInBinder Binder
+  | ParensInBinder (Binder' a)
   -- |
   -- A binder which binds its input to an identifier
   --
-  | NamedBinder SourceSpan Ident Binder
+  | NamedBinder a Ident (Binder' a)
   -- |
   -- A binder with source position information
   --
-  | PositionedBinder SourceSpan [Comment] Binder
+  | PositionedBinder a [Comment] (Binder' a)
   -- |
   -- A binder with a type annotation
   --
-  | TypedBinder SourceType Binder
-  deriving (Show)
+  | TypedBinder SourceType (Binder' a)
+  deriving (Show, Functor, Foldable, Traversable)
 
 -- Manual Eq and Ord instances for `Binder` were added on 2018-03-05. Comparing
 -- the `SourceSpan` values embedded in some of the data constructors of `Binder`
@@ -70,7 +70,7 @@ data Binder
 -- Custom instances were written to skip comparing the `SourceSpan` values. Only
 -- the `Ord` instance was needed for the speed-up, but I did not want the `Eq`
 -- to have mismatched behavior.
-instance Eq Binder where
+instance Eq (Binder' a) where
   (==) NullBinder NullBinder = True
   (==) NullBinder _ = False
 
@@ -108,7 +108,7 @@ instance Eq Binder where
     (==) ty ty' && (==) b b'
   (==) TypedBinder{} _ = False
 
-instance Ord Binder where
+instance Ord (Binder' a) where
   compare NullBinder NullBinder = EQ
   compare NullBinder _ = LT
 
@@ -169,7 +169,7 @@ instance Ord Binder where
 -- |
 -- Collect all names introduced in binders in an expression
 --
-binderNames :: Binder -> [Ident]
+binderNames :: Binder' a -> [Ident]
 binderNames = go []
   where
   go ns (LiteralBinder _ b) = lit ns b
@@ -185,7 +185,7 @@ binderNames = go []
   lit ns (ArrayLiteral bs) = foldl go ns bs
   lit ns _ = ns
 
-isIrrefutable :: Binder -> Bool
+isIrrefutable :: Binder' a -> Bool
 isIrrefutable NullBinder = True
 isIrrefutable (VarBinder _ _) = True
 isIrrefutable (PositionedBinder _ _ b) = isIrrefutable b

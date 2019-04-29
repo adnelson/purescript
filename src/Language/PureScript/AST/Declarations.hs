@@ -86,7 +86,7 @@ onTypeSearchTypesM f (TSAfter i r) = TSAfter <$> traverse (traverse f) i <*> tra
 onTypeSearchTypesM _ (TSBefore env) = pure (TSBefore env)
 
 -- | A type of error messages
-data SimpleErrorMessage
+data SimpleErrorMessage' a
   = ModuleNotFound ModuleName
   | ErrorParsingFFIModule FilePath (Maybe Bundle.ErrorMessage)
   | ErrorParsingModule P.ParseError
@@ -203,7 +203,7 @@ data SimpleErrorMessage
   deriving (Show, Functor, Foldable, Traversable)
 
 -- | Error message hints, providing more detailed information about failure.
-data ErrorMessageHint
+data ErrorMessageHint' a
   = ErrorUnifyingTypes SourceType SourceType
   | ErrorInExpression (AnnExpr a)
   | ErrorInModule ModuleName
@@ -238,9 +238,9 @@ data HintCategory
   | OtherHint
   deriving (Show, Eq)
 
-data ErrorMessage = ErrorMessage
-  [ErrorMessageHint]
-  SimpleErrorMessage
+data ErrorMessage' a = ErrorMessage
+  [ErrorMessageHint' a]
+  (SimpleErrorMessage' a)
   deriving (Show)
 
 -- |
@@ -256,18 +256,6 @@ data Module' a = Module {
   mExports :: Maybe [DeclarationRef]
   }
   deriving (Show)
-
--- | Return a module's name.
-getModuleName :: Module -> ModuleName
-getModuleName (Module _ _ name _ _) = name
-
--- | Return a module's source span.
-getModuleSourceSpan :: Module -> SourceSpan
-getModuleSourceSpan (Module ss _ _ _ _) = ss
-
--- | Return a module's declarations.
-getModuleDeclarations :: Module -> [Declaration]
-getModuleDeclarations (Module _ _ _ declarations _) = declarations
 
 -- |
 -- Add an import declaration for a module if it does not already explicitly import it.
@@ -503,7 +491,7 @@ pattern ValueDecl sann ident name binders expr
 -- |
 -- The data type of declarations
 --
-data Declaration
+data Declaration' a
   -- |
   -- A data type declaration (data or newtype, name, arguments, data constructors)
   --
@@ -511,7 +499,7 @@ data Declaration
   -- |
   -- A minimal mutually recursive set of data type declarations
   --
-  | DataBindingGroupDeclaration (NEL.NonEmpty Declaration)
+  | DataBindingGroupDeclaration (NEL.NonEmpty (Declaration' a))
   -- |
   -- A type synonym declaration (name, arguments, type)
   --
@@ -575,7 +563,7 @@ pattern TypeFixityDeclaration :: (SourceAnn' a) -> Fixity -> Qualified (ProperNa
 pattern TypeFixityDeclaration sa fixity name op = FixityDeclaration sa (Right (TypeFixity fixity name op))
 
 -- | The members of a type class instance declaration
-data TypeInstanceBody
+data TypeInstanceBody' a
   = DerivedInstance
   -- ^ This is a derived instance
   | NewtypeInstance
@@ -927,7 +915,7 @@ data WhereProvenance
 -- |
 -- An alternative in a case statement
 --
-data CaseAlternative = CaseAlternative
+data CaseAlternative' a = CaseAlternative
   { -- |
     -- A collection of binders with which to match the inputs
     --
@@ -941,7 +929,7 @@ data CaseAlternative = CaseAlternative
 -- |
 -- A statement in a do-notation block
 --
-data DoNotationElement
+data DoNotationElement' a
   -- |
   -- A monadic value without a binder
   --
