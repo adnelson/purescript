@@ -25,6 +25,7 @@ import qualified Data.List.NonEmpty as NEL
 import           Data.Maybe (fromMaybe)
 import qualified Data.Map as M
 import qualified Data.Set as S
+import qualified Data.Text as T
 import           Language.PureScript.AST
 import           Language.PureScript.Crash
 import           Language.PureScript.Environment
@@ -84,7 +85,7 @@ rebuildModule MakeActions{..} externs m@(Module _ _ moduleName _ _) = do
 --
 -- If timestamps have not changed, the externs file can be used to provide the module's types without
 -- having to typecheck the module again.
-make :: forall m. (Monad m, MonadBaseControl IO m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+make :: forall m. (Monad m, MonadIO m, MonadBaseControl IO m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
      => MakeActions m
      -> [Module]
      -> m [ExternsFile]
@@ -148,6 +149,7 @@ make ma@MakeActions{..} ms = do
 
   buildModule :: BuildPlan -> Module -> [ModuleName] -> m ()
   buildModule buildPlan m@(Module _ _ moduleName _ _) deps = flip catchError (complete Nothing . Just) $ do
+    liftIO $ putStrLn $ "Building module " <> renderModuleName moduleName
     -- We need to wait for dependencies to be built, before checking if the current
     -- module should be rebuilt, so the first thing to do is to wait on the
     -- MVars for the module's dependencies.
@@ -155,8 +157,14 @@ make ma@MakeActions{..} ms = do
 
     case mexterns of
       Just (_, externs) -> do
-        (exts, warnings) <- listen $ rebuildModule ma externs m
-        complete (Just (warnings, exts)) Nothing
+        liftIO $ putStrLn $ "Found " <> show (length externs) <> " externs for " <> renderModuleName moduleName
+        case filter (\ef -> efModuleName ef == moduleName) externs of
+          [externsFile] -> do
+            liftIO $ putStrLn $ renderModuleName moduleName <> " was already built"
+            complete (Just (mempty, externsFile)) Nothing
+          _ -> do
+            (exts, warnings) <- listen $ rebuildModule ma externs m
+            complete (Just (warnings, exts)) Nothing
       Nothing -> complete Nothing Nothing
     where
     complete :: Maybe (MultipleErrors, ExternsFile) -> Maybe MultipleErrors -> m ()

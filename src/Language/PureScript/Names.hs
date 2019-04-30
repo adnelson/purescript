@@ -168,6 +168,9 @@ instance NFData ModuleName
 runModuleName :: ModuleName -> Text
 runModuleName (ModuleName pns) = T.intercalate "." (runProperName <$> pns)
 
+renderModuleName :: ModuleName -> String
+renderModuleName = T.unpack . runModuleName
+
 moduleNameFromString :: Text -> ModuleName
 moduleNameFromString = ModuleName . splitProperNames
   where
