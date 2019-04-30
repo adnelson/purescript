@@ -12,6 +12,7 @@ import qualified Data.ByteString.Lazy.UTF8 as LBU8
 import qualified Data.Map as M
 import qualified Data.Set as S
 import           Data.Text (Text)
+import qualified Data.Text as T
 import qualified Language.PureScript as P
 import           Language.PureScript.Errors.JSON
 import           Language.PureScript.Make
@@ -21,6 +22,7 @@ import qualified System.Directory as D
 import           System.Exit (exitSuccess, exitFailure)
 import           System.Directory (getCurrentDirectory)
 import           System.IO (hPutStrLn, stderr)
+import qualified System.IO as IO
 import           System.IO.UTF8 (readUTF8FileT)
 
 data PSCMakeOptions = PSCMakeOptions
@@ -35,9 +37,9 @@ data PSCMakeOptions = PSCMakeOptions
 opts :: PSCMakeOptions
 opts = PSCMakeOptions {
   pscmDependencies = [],
-  pscmSourceDirectories = ["thetest/input"],
+  pscmSourceDirectories = ["thetest/js/bower_components/purescript-prelude/src", "thetest/input"],
   pscmOutputDir = "thetest/output",
-  pscmOpts = P.defaultOptions,
+  pscmOpts = P.defaultOptions { P.optionsVerboseErrors = True },
   pscmUsePrefix = True,
   pscmJSONErrors = True
   }
@@ -63,9 +65,15 @@ printWarningsAndErrors verbose True warnings errors = do
 
 compile :: PSCMakeOptions -> IO ()
 compile PSCMakeOptions{..} = do
-  sourceFiles <- mconcat <$> forM pscmSourceDirectories readSourceDirectory
+  IO.hSetBuffering IO.stdout IO.LineBuffering
+  IO.hSetBuffering IO.stderr IO.LineBuffering
+  scannedDirectories <- forM pscmSourceDirectories $ \root -> do
+    files <- readSourceDirectory root
+    pure (root, files)
   (makeErrors, makeWarnings) <- runMake pscmOpts $ do
-    ms <- P.parseModulesFromFiles id (map sfToTuple sourceFiles)
+    -- Read dependencies
+    let allFiles = mconcat $ map (uncurry sfsToTuples) scannedDirectories
+    ms <- P.parseModulesFromFiles id allFiles
     let filePathMap = M.fromList $ map (\(fp, P.Module _ _ mn _ _) -> (mn, Right fp)) ms
     foreigns <- inferForeignModules filePathMap
     let makeActions = buildMakeActions pscmOutputDir filePathMap foreigns pscmUsePrefix
@@ -78,47 +86,61 @@ warnFileTypeNotFound = hPutStrLn stderr . ("purs compile: No files found using p
 
 -- | Metadata about a source file (e.g. some purescript source file)
 data SourceFile = SourceFile {
-  sfPath :: FilePath,
+  sfModuleName :: P.ModuleName,
   -- ^ Relative path of the source file.
-  sfRoot :: FilePath,
-  -- ^ Source root, that this file is relative to.
   sfContents :: Text
   -- ^ The raw contents of the file.
-  } deriving (Show, Eq, Ord)
+  } deriving (Eq, Ord)
 
-sfToTuple :: SourceFile -> (FilePath, Text)
-sfToTuple (SourceFile p r c) = (r </> p, c)
+instance Show SourceFile where
+  show (SourceFile p _) = "SourceFile(" <> show p <> ")"
+
+sfToPath :: FilePath -> SourceFile -> FilePath
+sfToPath root (SourceFile name _) = root </> P.moduleNameToRelPath name
+
+-- | Convert a SourceFile to a tuple, given its root path
+sfsToTuples :: FilePath -> [SourceFile] -> [(FilePath, Text)]
+sfsToTuples root = map (\p -> (sfToPath root p, sfContents p))
 
 -- | Collect all of the source files from a given root directory.
 readSourceDirectory :: FilePath -> IO [SourceFile]
-readSourceDirectory root = execStateT (go root) [] where
+readSourceDirectory root = do
+  putStrLn $ "Discovering source files in " <> root
+  found <- execStateT (go (P.ModuleName [])) []
+  putStrLn $ "Found " <> show (length found) <> " files"
+  pure found
+  where
+  -- Characters which are allowed to appear in module names
   validChars = S.fromList $ ['0'..'9'] <> ['a'..'z'] <> ['A'..'Z'] <> "_'"
-  isValidPursSubdir path = do
-    putStrLn $ "checking if " <> path <> " is a valid purescript subdirectory"
-    case takeFileName path of
-      (c:cs) | isUpper c && all (flip S.member validChars) cs -> do
-        D.doesDirectoryExist path
-      _ -> pure False
-  isValidPursFile path = do
-    putStrLn $ "checking if " <> path <> " is a valid purescript file"
-    case (takeBaseName path, takeExtension path) of
-      (c:cs, ".purs") | isUpper c && all (flip S.member validChars) cs -> do
-        D.doesFileExist path
-      _ -> do
-        putStrLn $ path <> " is NOT a valid purescript file"
-        pure False
-  go :: FilePath -> StateT [SourceFile] IO ()
-  go dir = do
-    liftIO $ putStrLn $ "Scanning " <> dir
+
+  -- Check if a given (absolute) path is a valid directory to contain submodules
+  isValidPursSubdir path = case takeFileName path of
+    (c:cs) | isUpper c && all (flip S.member validChars) cs -> do
+      D.doesDirectoryExist path
+    _ -> pure False
+
+  -- Check if a given (absolute) path is valid to be a purescript module
+  isValidPursFile path = case (takeBaseName path, takeExtension path) of
+    (c:cs, ".purs") | isUpper c && all (flip S.member validChars) cs -> do
+      D.doesFileExist path
+    _ -> pure False
+
+  go :: P.ModuleName -> StateT [SourceFile] IO ()
+  go modName = do
+    let dir = root </> P.moduleNameToRelPath modName
     files <- liftIO $ D.listDirectory dir
     pursFiles <- filterM (liftIO . isValidPursFile . (dir </>)) files
     subdirs <- filterM (liftIO . isValidPursSubdir . (dir </>)) files
-    liftIO $ print (pursFiles, subdirs)
+
     -- Collect files in this directory
     forM_ pursFiles $ \filename -> do
-      let path = dir </> filename
-      contents <- liftIO $ readUTF8FileT path
-      let sf = SourceFile { sfPath = path, sfRoot = root, sfContents = contents }
+      contents <- liftIO $ readUTF8FileT (dir </> filename)
+      -- Strip off the ".purs" extension
+      let baseModName = P.ProperName $ T.dropEnd 5 $ T.pack filename
+      let modName' = P.addModuleName baseModName modName
+      let sf = SourceFile { sfModuleName = modName', sfContents = contents }
       modify (sf :)
+
     -- Recur on subdirectories
-    forM_ subdirs $ \subdir -> go (dir </> subdir)
+    forM_ subdirs $ \subdir -> do
+      go (P.addModuleName (P.ProperName $ T.pack subdir) modName)

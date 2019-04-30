@@ -180,6 +180,14 @@ isBuiltinModuleName :: ModuleName -> Bool
 isBuiltinModuleName (ModuleName (ProperName "Prim" : _)) = True
 isBuiltinModuleName _ = False
 
+-- | Append a new name to a module name.
+addModuleName :: ProperName 'Namespace -> ModuleName -> ModuleName
+addModuleName name (ModuleName names) = ModuleName (names <> [name])
+
+-- | Convert a module name to its expected path relative to source root.
+moduleNameToRelPath :: ModuleName -> FilePath
+moduleNameToRelPath (ModuleName names) = T.unpack $ T.intercalate "/" $ map runProperName names
+
 -- |
 -- A qualified name, i.e. a name with an optional module name
 --
