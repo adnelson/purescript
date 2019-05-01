@@ -26,7 +26,8 @@ import qualified System.IO as IO
 import           System.IO.UTF8 (readUTF8FileT)
 
 data PSCMakeOptions = PSCMakeOptions
-  { pscmDependencies      :: [FilePath]
+  { pscmPackageLocations  :: [FilePath]
+  , pscmDependentPackages :: [Text]
   , pscmSourceDirectories :: [FilePath]
   , pscmOutputDir         :: FilePath
   , pscmOpts              :: P.Options
@@ -36,8 +37,9 @@ data PSCMakeOptions = PSCMakeOptions
 
 opts :: PSCMakeOptions
 opts = PSCMakeOptions {
-  pscmDependencies = ["thetest/js/bower_components/purescript-prelude"],
-  pscmSourceDirectories = ["thetest/input"],
+  pscmPackageLocations = ["thetest/js/bower_components"],
+  pscmDependentPackages = ["purescript-prelude"],
+  pscmSourceDirectories = ["thetest/js/bower_components/purescript-prelude/src", "thetest/input"],
   pscmOutputDir = "thetest/output",
   pscmOpts = P.defaultOptions { P.optionsVerboseErrors = True },
   pscmUsePrefix = True,
