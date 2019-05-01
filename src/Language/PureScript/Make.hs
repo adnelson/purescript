@@ -25,7 +25,7 @@ import qualified Data.List.NonEmpty as NEL
 import           Data.Maybe (fromMaybe)
 import qualified Data.Map as M
 import qualified Data.Set as S
-import qualified Data.Text as T
+-- import qualified Data.Text as T
 import           Language.PureScript.AST
 import           Language.PureScript.Crash
 import           Language.PureScript.Environment

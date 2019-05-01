@@ -36,8 +36,8 @@ data PSCMakeOptions = PSCMakeOptions
 
 opts :: PSCMakeOptions
 opts = PSCMakeOptions {
-  pscmDependencies = [],
-  pscmSourceDirectories = ["thetest/js/bower_components/purescript-prelude/src", "thetest/input"],
+  pscmDependencies = ["thetest/js/bower_components/purescript-prelude"],
+  pscmSourceDirectories = ["thetest/input"],
   pscmOutputDir = "thetest/output",
   pscmOpts = P.defaultOptions { P.optionsVerboseErrors = True },
   pscmUsePrefix = True,
@@ -67,6 +67,7 @@ compile :: PSCMakeOptions -> IO ()
 compile PSCMakeOptions{..} = do
   IO.hSetBuffering IO.stdout IO.LineBuffering
   IO.hSetBuffering IO.stderr IO.LineBuffering
+
   scannedDirectories <- forM pscmSourceDirectories $ \root -> do
     files <- readSourceDirectory root
     pure (root, files)
@@ -80,9 +81,6 @@ compile PSCMakeOptions{..} = do
     P.make makeActions (map snd ms)
   printWarningsAndErrors (P.optionsVerboseErrors pscmOpts) pscmJSONErrors makeWarnings makeErrors
   exitSuccess
-
-warnFileTypeNotFound :: String -> IO ()
-warnFileTypeNotFound = hPutStrLn stderr . ("purs compile: No files found using pattern: " ++)
 
 -- | Metadata about a source file (e.g. some purescript source file)
 data SourceFile = SourceFile {

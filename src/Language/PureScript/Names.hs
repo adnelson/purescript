@@ -165,6 +165,9 @@ newtype ModuleName = ModuleName [ProperName 'Namespace]
 
 instance NFData ModuleName
 
+instance ToJSONKey ModuleName
+instance FromJSONKey ModuleName
+
 runModuleName :: ModuleName -> Text
 runModuleName (ModuleName pns) = T.intercalate "." (runProperName <$> pns)
 
