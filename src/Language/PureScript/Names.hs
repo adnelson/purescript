@@ -10,6 +10,8 @@ module Language.PureScript.Names where
 
 import Prelude.Compat
 
+import Database.SQLite.Simple.ToField (ToField(..))
+import Database.SQLite.Simple.FromField (FromField(..))
 import Control.Monad.Supply.Class
 import Control.DeepSeq (NFData)
 
@@ -167,6 +169,10 @@ instance NFData ModuleName
 
 instance ToJSONKey ModuleName
 instance FromJSONKey ModuleName
+
+-- TODO might want to make these more robust...
+instance ToField ModuleName where toField = toField . runModuleName
+instance FromField ModuleName where fromField f = moduleNameFromString <$> fromField f
 
 runModuleName :: ModuleName -> Text
 runModuleName (ModuleName pns) = T.intercalate "." (runProperName <$> pns)

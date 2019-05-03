@@ -16,6 +16,9 @@ module Language.PureScript.Externs
 
 import Prelude.Compat
 
+import Database.SQLite.Simple.ToField (ToField(..))
+import Database.SQLite.Simple.FromField (FromField(..))
+import Data.Aeson (encode, eitherDecode)
 import Data.Aeson.TH
 import Data.Maybe (fromMaybe, mapMaybe, maybeToList)
 import Data.List (foldl', find)
@@ -56,6 +59,12 @@ data ExternsFile = ExternsFile
   , efSourceSpan :: SourceSpan
   -- ^ Source span for error reporting
   } deriving (Show)
+
+instance ToField ExternsFile where toField = toField . encode
+instance FromField ExternsFile where
+  fromField f = eitherDecode <$> fromField f >>= \case
+    Left err -> fail err
+    Right ef -> pure ef
 
 -- | A module import in an externs file
 data ExternsImport = ExternsImport
