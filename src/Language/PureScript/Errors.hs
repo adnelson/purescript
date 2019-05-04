@@ -585,7 +585,7 @@ prettyPrintSingleError (PPEOptions codeColor full level showDocs relPath) e = fl
       paras [ line $ "A cycle appears in a set of type class definitions:"
             , indent $ line $ "{" <> (T.intercalate ", " (map (markCode . runProperName . disqualify) names)) <> "}"
             , line "Cycles are disallowed because they can lead to loops in the type checker."
-            ]  
+            ]
     renderSimpleErrorMessage (NameIsUndefined ident) =
       line $ "Value " <> markCode (showIdent ident) <> " is undefined."
     renderSimpleErrorMessage (UndefinedTypeVariable name) =

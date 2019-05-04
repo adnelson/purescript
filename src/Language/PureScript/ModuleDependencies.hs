@@ -8,25 +8,51 @@ import           Protolude hiding (head)
 
 import           Data.Graph
 import qualified Data.Set as S
-import           Language.PureScript.AST
+import           Language.PureScript.AST (Module(..), SourceSpan(..), Declaration(..), SimpleErrorMessage(..), getModuleName, getModuleSourceSpan, getModuleDeclarations, ErrorMessageHint(..))
 import qualified Language.PureScript.Constants as C
 import           Language.PureScript.Crash
-import           Language.PureScript.Errors hiding (nonEmpty)
+import           Language.PureScript.Errors (MultipleErrors, errorMessage', errorMessage'', parU, addHint)
 import           Language.PureScript.Names
 
 -- | A list of modules with their transitive dependencies
 type ModuleGraph = [(ModuleName, [ModuleName])]
 
--- | Sort a collection of modules based on module dependencies.
---
--- Reports an error if the module graph contains a cycle.
 sortModules
   :: forall m
    . MonadError MultipleErrors m
   => [Module]
   -> m ([Module], ModuleGraph)
-sortModules ms = do
-    let mns = S.fromList $ map getModuleName ms
+sortModules =
+  sortModules'
+    getModuleName
+    getModuleSourceSpan
+    (catMaybes . map usedModules . getModuleDeclarations)
+
+-- | Sort a collection of modules based on module dependencies.
+--
+-- Reports an error if the module graph contains a cycle.
+sortModules'
+  :: forall m a
+   . MonadError MultipleErrors m
+  => (a -> ModuleName)
+  -> (a -> SourceSpan)
+  -> (a -> [(ModuleName, SourceSpan)])
+  -> [a]
+  -> m ([a], ModuleGraph)
+sortModules' getModuleName getModuleSourceSpan getImports ms = do
+    let
+      mns = S.fromList $ map getModuleName ms
+      toModule :: MonadError MultipleErrors m => SCC a -> m a
+      toModule (AcyclicSCC m) = return m
+      toModule (CyclicSCC ms) =
+        case nonEmpty ms of
+          Nothing ->
+            internalError "toModule: empty CyclicSCC"
+          Just ms' ->
+            throwError
+              . errorMessage'' (fmap getModuleSourceSpan ms')
+              $ CycleInModules (map getModuleName ms)
+
     verts <- parU ms (toGraphNode mns)
     ms' <- parU (stronglyConnComp verts) toModule
     let (graph, fromVertex, toVertex) = graphFromEdges verts
@@ -37,16 +63,16 @@ sortModules ms = do
                          return (mn, filter (/= mn) (map toKey deps))
     return (ms', moduleGraph)
   where
-    toGraphNode :: S.Set ModuleName -> Module -> m (Module, ModuleName, [ModuleName])
-    toGraphNode mns m@(Module _ _ mn ds _) = do
-      let deps = ordNub (mapMaybe usedModules ds)
+    toGraphNode :: S.Set ModuleName -> a -> m (a, ModuleName, [ModuleName])
+    toGraphNode mns mod = do
+      let deps = ordNub (getImports mod)
       void . parU deps $ \(dep, pos) ->
         when (dep `notElem` C.primModules && S.notMember dep mns) .
           throwError
-            . addHint (ErrorInModule mn)
+            . addHint (ErrorInModule $ getModuleName mod)
             . errorMessage' pos
             $ ModuleNotFound dep
-      pure (m, getModuleName m, map fst deps)
+      pure (mod, getModuleName mod, map fst deps)
 
 -- | Calculate a list of used modules based on explicit imports and qualified names.
 usedModules :: Declaration -> Maybe (ModuleName, SourceSpan)
@@ -54,15 +80,3 @@ usedModules :: Declaration -> Maybe (ModuleName, SourceSpan)
 -- take into account its import to build an accurate list of dependencies.
 usedModules (ImportDeclaration (ss, _) mn _ _) = pure (mn, ss)
 usedModules _ = Nothing
-
--- | Convert a strongly connected component of the module graph to a module
-toModule :: MonadError MultipleErrors m => SCC Module -> m Module
-toModule (AcyclicSCC m) = return m
-toModule (CyclicSCC ms) =
-  case nonEmpty ms of
-    Nothing ->
-      internalError "toModule: empty CyclicSCC"
-    Just ms' ->
-      throwError
-        . errorMessage'' (fmap getModuleSourceSpan ms')
-        $ CycleInModules (map getModuleName ms)

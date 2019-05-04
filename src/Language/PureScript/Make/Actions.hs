@@ -16,7 +16,7 @@ import           Control.Monad.Reader (asks)
 import           Control.Monad.Supply
 import           Control.Monad.Trans.Class (MonadTrans(..))
 import           Control.Monad.Writer.Class (MonadWriter(..))
-import           Data.Aeson (encode)
+import           Data.Aeson (encode, decode)
 import qualified Data.ByteString.Lazy as B
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.ByteString.Lazy.UTF8 as LBU8
@@ -40,6 +40,7 @@ import qualified Language.PureScript.CoreFn.ToJSON as CFJ
 import qualified Language.PureScript.CoreImp.AST as Imp
 import           Language.PureScript.Crash
 import           Language.PureScript.Environment
+import           Language.PureScript.Externs
 import           Language.PureScript.Errors
 import           Language.PureScript.Make.Monad
 import           Language.PureScript.Names
@@ -91,9 +92,8 @@ data MakeActions m = MakeActions
   -- ^ Get the timestamp for the output files for a module. This should be the
   -- timestamp for the oldest modified file, or 'Nothing' if any of the required
   -- output files are missing.
-  , readExterns :: ModuleName -> m (FilePath, Externs)
-  -- ^ Read the externs file for a module as a string and also return the actual
-  -- path for the file.
+  , readExternsFile :: ModuleName -> m (Maybe ExternsFile)
+  -- ^ Return the parsed externs file for a module, if one has been computed.
   , codegen :: CF.Module CF.Ann -> Environment -> Externs -> SupplyT m ()
   -- ^ Run the code generator for the module and write any required output files.
   , ffiCodegen :: CF.Module CF.Ann -> m ()
@@ -142,10 +142,14 @@ buildMakeActions outputDir filePathMap foreigns usePrefix =
     timestamps <- traverse getTimestamp outputPaths
     pure $ fmap minimum . NEL.nonEmpty =<< sequence timestamps
 
-  readExterns :: ModuleName -> Make (FilePath, Externs)
+  readExterns :: ModuleName -> Make (Maybe ExternsFile)
   readExterns mn = do
     let path = outputDir </> T.unpack (runModuleName mn) </> "externs.json"
-    (path, ) <$> readTextFile path
+    bs <- readTextFile path
+    pure $ do
+      externs <- decode bs
+      guard $ T.unpack (efVersion externs) == showVersion Paths.version
+      pure externs
 
   codegen :: CF.Module CF.Ann -> Environment -> Externs -> SupplyT Make ()
   codegen m _ exts = do

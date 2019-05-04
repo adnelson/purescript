@@ -143,7 +143,7 @@ construct MakeActions{..} (sorted, graph) = do
           case existingExtern of
             Nothing -> pure prev
             Just outputTime -> do
-              mexts <- decodeExterns . snd <$> readExterns moduleName
+              mexts <- readExternsFile moduleName
               case mexts of
                 Just exts ->
                   pure (M.insert moduleName (Prebuilt outputTime exts) prev)
@@ -152,9 +152,3 @@ construct MakeActions{..} (sorted, graph) = do
 maximumMaybe :: Ord a => [a] -> Maybe a
 maximumMaybe [] = Nothing
 maximumMaybe xs = Just $ maximum xs
-
-decodeExterns :: Externs -> Maybe ExternsFile
-decodeExterns bs = do
-  externs <- decode bs
-  guard $ T.unpack (efVersion externs) == showVersion Paths.version
-  return externs
