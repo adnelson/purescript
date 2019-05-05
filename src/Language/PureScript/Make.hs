@@ -22,7 +22,7 @@ import           Data.Function (on)
 import           Data.Foldable (for_)
 import           Data.List (foldl', sortBy)
 import qualified Data.List.NonEmpty as NEL
-import           Data.Maybe (fromMaybe)
+import           Data.Maybe (fromMaybe, isJust)
 import qualified Data.Map as M
 import qualified Data.Set as S
 -- import qualified Data.Text as T
@@ -91,15 +91,14 @@ make :: forall m. (Monad m, MonadIO m, MonadBaseControl IO m, MonadError Multipl
      -> m [ExternsFile]
 make ma@MakeActions{..} ms = do
   checkModuleNames
+  (sorted, graph, dependencyExterns) <- sortModules readExternsFile ms
 
-  (sorted, graph) <- sortModules ms
-
-  buildPlan <- BuildPlan.construct ma (sorted, graph)
+  buildPlan <- BuildPlan.construct ma sorted graph dependencyExterns
 
   let toBeRebuilt = filter (BuildPlan.needsRebuild buildPlan . getModuleName) sorted
   for_ toBeRebuilt $ \m -> fork $ do
     let deps = fromMaybe (internalError "make: module not found in dependency graph.") (lookup (getModuleName m) graph)
-    buildModule buildPlan (importPrim m) (deps `inOrderOf` map getModuleName sorted)
+    buildModule buildPlan (importPrim m) (deps <> M.keys dependencyExterns)
 
   -- Wait for all threads to complete, and collect errors.
   errors <- BuildPlan.collectErrors buildPlan
@@ -144,31 +143,33 @@ make ma@MakeActions{..} ms = do
       xss -> Just xss
 
   -- Sort a list so its elements appear in the same order as in another list.
+  -- TODO I think the above comment is incorrect...? This looks like a union operation.
   inOrderOf :: (Ord a) => [a] -> [a] -> [a]
   inOrderOf xs ys = let s = S.fromList xs in filter (`S.member` s) ys
 
   buildModule :: BuildPlan -> Module -> [ModuleName] -> m ()
-  buildModule buildPlan m@(Module _ _ moduleName _ _) deps = flip catchError (complete Nothing . Just) $ do
-    liftIO $ putStrLn $ "Building module " <> renderModuleName moduleName
-    -- We need to wait for dependencies to be built, before checking if the current
-    -- module should be rebuilt, so the first thing to do is to wait on the
-    -- MVars for the module's dependencies.
-    mexterns <- fmap unzip . sequence <$> traverse (getResult buildPlan) deps
+  buildModule buildPlan m@(Module _ _ moduleName _ _) deps = do
+    let
+      complete :: Either MultipleErrors (MultipleErrors, ExternsFile) -> m ()
+      complete = BuildPlan.markComplete buildPlan moduleName
+    flip catchError (complete . Left) $ do -- (complete Nothing . Just) $ do
+      liftIO $ putStrLn $ "Building module " <> renderModuleName moduleName <> " with deps " <> show deps
+      -- We need to wait for dependencies to be built, before checking if the current
+      -- module should be rebuilt, so the first thing to do is to wait on the
+      -- MVars for the module's dependencies.
+      externs <- getDependenciesTrans buildPlan moduleName deps
+      liftIO $ putStrLn $ renderModuleName moduleName <> " full dependendencies: "
+                        <> show (map renderModuleName $ M.keys externs)
+      -- mexterns <- fmap unzip . sequence <$> traverse (getResult buildPlan readExternsFile) deps
 
-    case mexterns of
-      Just (_, externs) -> do
-        liftIO $ putStrLn $ "Found " <> show (length externs) <> " externs for " <> renderModuleName moduleName
-        case filter (\ef -> efModuleName ef == moduleName) externs of
-          [externsFile] -> do
-            liftIO $ putStrLn $ renderModuleName moduleName <> " was already built"
-            complete (Just (mempty, externsFile)) Nothing
-          _ -> do
-            (exts, warnings) <- listen $ rebuildModule ma externs m
-            complete (Just (warnings, exts)) Nothing
-      Nothing -> complete Nothing Nothing
-    where
-    complete :: Maybe (MultipleErrors, ExternsFile) -> Maybe MultipleErrors -> m ()
-    complete = BuildPlan.markComplete buildPlan moduleName
+      -- liftIO $ putStrLn $ "Found " <> show (length externs) <> " externs for " <> renderModuleName moduleName
+      case M.lookup moduleName externs of
+        Just externsFile -> do
+          liftIO $ putStrLn $ renderModuleName moduleName <> " was already built"
+          complete $ Right (mempty, externsFile)
+        _ -> do
+          (exts, warnings) <- listen $ rebuildModule ma (M.elems externs) m
+          complete $ Right (warnings, exts)
 
 -- | Infer the module name for a module by looking for the same filename with
 -- a .js extension.

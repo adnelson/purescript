@@ -174,6 +174,7 @@ instance FromJSONKey ModuleName
 instance ToField ModuleName where toField = toField . runModuleName
 instance FromField ModuleName where fromField f = moduleNameFromString <$> fromField f
 
+
 runModuleName :: ModuleName -> Text
 runModuleName (ModuleName pns) = T.intercalate "." (runProperName <$> pns)
 

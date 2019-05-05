@@ -69,7 +69,7 @@ lintImports (Module _ _ mn mdecls (Just mexports)) env usedImps = do
       imports = M.toAscList (findImports mdecls)
 
   for_ imports $ \(mni, decls) ->
-    unless (isPrim mni) .
+    unless (C.isPrim mni) .
       for_ decls $ \(ss, declType, qualifierName) -> do
         let names = ordNub $ M.findWithDefault [] mni usedImps'
         lintImportDecl env mni qualifierName names ss declType allowImplicit
@@ -134,15 +134,10 @@ lintImports (Module _ _ mn mdecls (Just mexports)) env usedImps = do
 
   countOpenImports :: Declaration -> Int
   countOpenImports (ImportDeclaration _ mn' Implicit Nothing)
-    | not (isPrim mn' || mn == mn') = 1
+    | not (C.isPrim mn' || mn == mn') = 1
   countOpenImports (ImportDeclaration _ mn' (Hiding _) Nothing)
-    | not (isPrim mn' || mn == mn') = 1
+    | not (C.isPrim mn' || mn == mn') = 1
   countOpenImports _ = 0
-
-  -- Checks whether a module is the Prim module - used to suppress any checks
-  -- made, as Prim is always implicitly imported.
-  isPrim :: ModuleName -> Bool
-  isPrim = (== ModuleName [ProperName C.prim])
 
   -- Creates a map of virtual modules mapped to all the declarations that
   -- import to that module, with the corresponding source span, import type,

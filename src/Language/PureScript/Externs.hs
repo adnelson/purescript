@@ -12,6 +12,7 @@ module Language.PureScript.Externs
   , ExternsDeclaration(..)
   , moduleToExternsFile
   , applyExternsFileToEnvironment
+  , efImportedModuleNames
   ) where
 
 import Prelude.Compat
@@ -76,6 +77,9 @@ data ExternsImport = ExternsImport
   -- | The imported-as name, for qualified imports
   , eiImportedAs :: Maybe ModuleName
   } deriving (Show)
+
+efImportedModuleNames :: ExternsFile -> [ModuleName]
+efImportedModuleNames = map eiModule . efImports
 
 -- | A fixity declaration in an externs file
 data ExternsFixity = ExternsFixity

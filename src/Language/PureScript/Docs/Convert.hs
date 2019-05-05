@@ -115,8 +115,8 @@ convertModulesWithEnv ::
   [P.Module] ->
   m ([Module], P.Env)
 convertModulesWithEnv withPackage =
-  P.sortModules
-    >>> fmap (fst >>> map P.importPrim)
+  P.sortModules (const (pure Nothing))
+    >>> fmap ((\(mods, _, _) -> mods) >>> map P.importPrim)
     >=> convertSorted withPackage
 
 -- |

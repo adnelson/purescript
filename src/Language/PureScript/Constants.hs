@@ -471,6 +471,9 @@ pattern Warn = Qualified (Just PrimTypeError) (ProperName "Warn")
 primModules :: [ModuleName]
 primModules = [Prim, PrimBoolean, PrimOrdering, PrimRow, PrimRowList, PrimSymbol, PrimTypeError]
 
+isPrim :: ModuleName -> Bool
+isPrim mn = mn `elem` primModules
+
 -- Data.Symbol
 
 pattern DataSymbol :: ModuleName

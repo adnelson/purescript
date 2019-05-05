@@ -83,6 +83,7 @@ errorCode em = case unwrapErrorMessage em of
   MissingFFIImplementations{} -> "MissingFFIImplementations"
   UnusedFFIImplementations{} -> "UnusedFFIImplementations"
   InvalidFFIIdentifier{} -> "InvalidFFIIdentifier"
+  CannotFindSourceRoot{} -> "CannotFindSourceRoot"
   CannotGetFileInfo{} -> "CannotGetFileInfo"
   CannotReadFile{} -> "CannotReadFile"
   CannotWriteFile{} -> "CannotWriteFile"
@@ -458,6 +459,9 @@ prettyPrintSingleError (PPEOptions codeColor full level showDocs relPath) e = fl
       paras [ line $ "Module " <> markCode (runModuleName mn) <> " was not found."
             , line "Make sure the source file exists, and that it has been provided as an input to the compiler."
             ]
+    renderSimpleErrorMessage (CannotFindSourceRoot path) =
+      paras [ line $ "Unable to discover PureScript modules in " <> T.pack (show path)
+            ]
     renderSimpleErrorMessage (CannotGetFileInfo path) =
       paras [ line "Unable to read file info: "
             , indent . lineS $ path
@@ -526,7 +530,7 @@ prettyPrintSingleError (PPEOptions codeColor full level showDocs relPath) e = fl
     renderSimpleErrorMessage (UnknownName name@(Qualified Nothing (IdentName (Ident i)))) | i `elem` [ C.bind, C.discard ] =
       line $ "Unknown " <> printName name <> ". You're probably using do-notation, which the compiler replaces with calls to the " <> markCode i <> " function. Please import " <> markCode i <> " from module " <> markCode "Prelude"
     renderSimpleErrorMessage (UnknownName name) =
-      line $ "Unknown " <> printName name
+      line $ "!!!Unknown " <> printName name
     renderSimpleErrorMessage (UnknownImport mn name) =
       paras [ line $ "Cannot import " <> printName (Qualified Nothing name) <> " from module " <> markCode (runModuleName mn)
             , line "It either does not exist or the module does not export it."

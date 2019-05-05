@@ -16,6 +16,7 @@ import Control.Monad.Identity
 
 import Data.Aeson.TH
 import qualified Data.Map as M
+import Data.Maybe (mapMaybe)
 import Data.Set (Set)
 import Data.Text (Text)
 import qualified Data.List.NonEmpty as NEL
@@ -73,6 +74,7 @@ data SimpleErrorMessage
   | MissingFFIImplementations ModuleName [Ident]
   | UnusedFFIImplementations ModuleName [Ident]
   | InvalidFFIIdentifier ModuleName Text
+  | CannotFindSourceRoot FilePath
   | CannotGetFileInfo FilePath
   | CannotReadFile FilePath
   | CannotWriteFile FilePath
@@ -240,6 +242,11 @@ getModuleSourceSpan (Module ss _ _ _ _) = ss
 -- | Return a module's declarations.
 getModuleDeclarations :: Module -> [Declaration]
 getModuleDeclarations (Module _ _ _ declarations _) = declarations
+
+getModuleImports :: Module -> [ModuleName]
+getModuleImports modl = mapMaybe getImport $ getModuleDeclarations modl
+  where getImport (ImportDeclaration _ mn _ _) = Just mn
+        getImport _ = Nothing
 
 -- |
 -- Add an import declaration for a module if it does not already explicitly import it.

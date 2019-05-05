@@ -3,6 +3,8 @@
 --
 module Language.PureScript.Sugar (desugar, module S) where
 
+import Prelude -- (error, undefined, show)
+import Debug.Trace
 import Control.Category ((>>>))
 import Control.Monad
 import Control.Monad.Error.Class (MonadError())
@@ -57,7 +59,7 @@ desugar
   => [ExternsFile]
   -> [Module]
   -> m [Module]
-desugar externs =
+desugar externs = do
   map desugarSignedLiterals
     >>> traverse desugarObjectConstructors
     >=> traverse desugarDoModule

@@ -173,7 +173,7 @@ sortExterns
   -> m [P.ExternsFile]
 sortExterns m ex = do
   sorted' <- runExceptT
-           . P.sortModules
+           . P.sortModules (const (pure Nothing)) -- by this stage there are no external modules
            . (:) m
            . map mkShallowModule
            . M.elems
@@ -181,7 +181,7 @@ sortExterns m ex = do
   case sorted' of
     Left err ->
       throwError (RebuildError err)
-    Right (sorted, graph) -> do
+    Right (sorted, graph, _) -> do
       let deps = fromJust (List.lookup (P.getModuleName m) graph)
       pure $ mapMaybe getExtern (deps `inOrderOf` map P.getModuleName sorted)
   where
