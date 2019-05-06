@@ -37,7 +37,7 @@ import           System.IO (hPutStrLn, stderr)
 import qualified System.IO as IO
 import           System.IO.UTF8 (readUTF8FileT)
 import           Database.SQLite.Simple (Connection, Query, Only(..))
-import           Database.SQLite.Simple (query, query_, execute_, executeMany, open)
+import           Database.SQLite.Simple (query, query_, execute_, executeMany, open, execute)
 import           Database.SQLite.Simple.ToField (ToField(..))
 
 data PSCMakeOptions = PSCMakeOptions
@@ -172,12 +172,6 @@ readSourceDirectory read' root = do
       go (P.addModuleName (P.ProperName $ T.pack subdir) modName)
 
 
--- | TODO: make a smart constructor for this
-newtype PackageName = PackageName Text deriving (Show)
-
-instance ToField PackageName where
-  toField (PackageName name) = toField name
-
 data MakeOptions = MakeOptions
   { moPackageLocations  :: [FilePath]
   -- ^ Where to find the code (compiled or not) for dependencies. For
@@ -185,7 +179,7 @@ data MakeOptions = MakeOptions
   -- this list for which 'f/p' exists. The code at this location could
   -- be compiled (already has a manifest.db), or it could be
   -- PureScript, in which case it will be compiled once.
-  , moDependencies      :: [PackageName]
+  , moDependencies      :: [P.PackageName]
   -- ^ The names of package dependencies. Modules in these packages
   -- will be in scope for the project.
   , moSourceDirectories :: [FilePath]
@@ -207,7 +201,7 @@ data MakeOptions = MakeOptions
 opts' :: MakeOptions
 opts' = MakeOptions {
   moPackageLocations = ["thetest/js/bower_components"],
-  moDependencies = [PackageName "purescript-prelude"],
+  moDependencies = [P.PackageName "purescript-prelude"],
   moSourceDirectories = ["thetest/input"],
   moOutputDirectory = "thetest/output2",
   moCompilerOptions = P.defaultOptions { P.optionsVerboseErrors = True },
@@ -234,6 +228,7 @@ createPackageModulesTable = fromString $ unlines [
   "  package TEXT NOT NULL,",
   "  module_name TEXT NOT NULL,",
   "  externs BLOB NOT NULL,",
+  "  timestamp TEXT NOT NULL,",
   -- Perhaps better than this would be to store the source of the
   -- package, which can be either a path to a manifest or to a source
   -- directory.
@@ -241,27 +236,53 @@ createPackageModulesTable = fromString $ unlines [
   ");"
   ]
 
+createExternsTable :: Query
+createExternsTable = fromString $ unlines [
+  "CREATE TABLE IF NOT EXISTS externs (",
+  "  module TEXT NOT NULL,",
+  "  package TEXT,",
+  "  externs BLOB NOT NULL,",
+  "  timestamp TEXT NOT NULL,",
+  "  UNIQUE(package, module)",
+  ");"
+  ]
+
 createLocalModulesTable :: Query
 createLocalModulesTable = fromString $ unlines [
-  "CREATE TABLE IF NOT EXISTS local_modules (",
+  "CREATE TABLE IF NOT EXISTS local_paths (",
+  "  module_name TEXT NOT NULL PRIMARY KEY,",
+  "  source_path TEXT NOT NULL",
+  ");"
+  ]
+
+createLocalModulesExternsTable :: Query
+createLocalModulesExternsTable = fromString $ unlines [
+  "CREATE TABLE IF NOT EXISTS local_externs (",
   "  module_name TEXT NOT NULL PRIMARY KEY,",
   "  externs BLOB NOT NULL,",
   "  timestamp TEXT NOT NULL,",
-  "  source_path TEXT NOT NULL",
   ");"
   ]
 
 addPackageModuleQuery :: Query
 addPackageModuleQuery =
-  "INSERT INTO package_modules (package, module_name, externs, is_relative_path) VALUES (?, ?, ?, ?)"
+  "INSERT INTO package_modules (package, module_name, externs, timestamp, is_relative_path) VALUES (?, ?, ?, ?, ?)"
+
+addLocalModulePathQuery :: Query
+addLocalModulePathQuery =
+  "INSERT OR REPLACE INTO local_paths (module_name, source_path) VALUES (?, ?)"
+
+addExternsQuery :: Query
+addExternsQuery = do
+  "INSERT OR REPLACE INTO externs (module, package, externs, timestamp) VALUES (?, ?, ?, ?)"
 
 addLocalModuleQuery :: Query
 addLocalModuleQuery =
-  "INSERT INTO local_modules (module_name, externs, timestamp, source_path) VALUES (?, ?, ?, ?)"
+  "INSERT OR REPLACE INTO local_modules (module_name, externs, timestamp) VALUES (?, ?, ?)"
 
 readPrecompiledExternsQuery :: Query
 readPrecompiledExternsQuery =
-  "SELECT module_name, externs FROM package_modules WHERE package = ?"
+  "SELECT module_name, externs, timestamp FROM package_modules WHERE package = ?"
 
 readPackageModulesQuery :: Query
 readPackageModulesQuery = "SELECT module_name FROM package_modules"
@@ -279,21 +300,21 @@ hasPackageModuleQuery =
 -- | Check a timestamp for a single local module
 getLocalModuleTimestampQuery :: Query
 getLocalModuleTimestampQuery =
-  "SELECT timestamp FROM local_modules WHERE module_name = ?"
+  "SELECT timestamp FROM local_externs WHERE module_name = ?"
 
 -- | Get the path on disk for a single local module
 getLocalModulePathQuery :: Query
 getLocalModulePathQuery =
-  "SELECT source_path FROM local_modules WHERE module_name = ?"
+  "SELECT source_path FROM local_paths WHERE module_name = ?"
 
 type SomeMake m = (MonadIO m, MonadBaseControl IO m, MonadReader BuildConfig m, MonadError P.MultipleErrors m, MonadWriter P.MultipleErrors m)
 
 addPackageSourcesToManifest
   :: forall m. SomeMake m
-  => PackageName -- ^ Name of the package being loaded
+  => P.PackageName -- ^ Name of the package being loaded
   -> FilePath -- ^ Location where the package lives
   -> m () -- ^ Compiles the modules and adds them to the manifest DB.
-addPackageSourcesToManifest pname@(PackageName (T.unpack -> name)) dir = do
+addPackageSourcesToManifest pname@(P.PackageName (T.unpack -> name)) dir = do
   liftIO $ putStrLn $ "Loading package " <> show name <> " from " <> dir
   -- Find the first valid purescript file in the folder, use this to determine the source root.
   let
@@ -335,9 +356,9 @@ runMake' action = do
 
 loadDependency
   :: forall m. SomeMake m
-  => PackageName -- ^ Package being compiled
+  => P.PackageName -- ^ Package being compiled
   -> m ()
-loadDependency pn@(PackageName (T.unpack -> n)) = do
+loadDependency pn@(P.PackageName (T.unpack -> n)) = do
   -- If it's already in the database, return
   -- Search for the package name in package locations
   BuildConfig (MakeOptions {..}) (ManifestHandle _ mv) <- ask
@@ -377,6 +398,18 @@ initBuildConfig options@(MakeOptions {..}) = do
   handle <- ManifestHandle dbPath <$> newMVar manifestConn
   pure $ BuildConfig options handle
 
+storeExternsFile'
+  :: forall m. SomeMake m
+  => P.ModuleName
+  -> P.ExternsFile
+  -> UTCTime
+  -> Maybe P.PackageName
+  -> m ()
+storeExternsFile' modName externs stamp pkgName = do
+  BuildConfig (MakeOptions {..}) (ManifestHandle _ mv) <- ask
+  liftIO $ withMVar mv $ \conn -> do
+    execute conn addExternsQuery (modName, pkgName, externs, stamp)
+
 buildLocalModules
   :: forall m. SomeMake m
   => ModuleDepGraph -- (FilePath, [SourceFile])]
@@ -408,24 +441,27 @@ buildMakeActions' subdir filePathMap foreigns = do
   BuildConfig (MakeOptions {..}) (ManifestHandle _ mv) <- ask
   let outDir = if subdir /= "" then moOutputDirectory else moOutputDirectory </> subdir
   -- Create a customized MakeActions object which will look up externs from the database.
-  let readExternsFile mn = withMVar mv $ \conn -> do
-        liftIO $ putStrLn $ "Looking up externsfile for module " <> P.renderModuleName mn
-        liftIO (query conn readPackageExternsQuery (Only mn)) >>= \case
-          [Only externs] -> pure $ Just externs
-          [] -> pure Nothing
-          _ -> P.internalError $ "Ambiguous module " <> P.renderModuleName mn
-
   let
+    readExternsFile mn = withMVar mv $ \conn -> do
+      liftIO $ putStrLn $ "Looking up externsfile for module " <> P.renderModuleName mn
+      liftIO (query conn readPackageExternsQuery (Only mn)) >>= \case
+        [Only externs] -> pure $ Just externs
+        [] -> pure Nothing
+        _ -> P.internalError $ "Ambiguous module " <> P.renderModuleName mn
+
+    getCachedExterns = error "getCachedExterns not implemented"
+    storeExternsFile = error "storeExternsFile not implemented"
+
     getInputTimestamp mn = liftIO $ withMVar mv $ \conn -> do
       -- If it's a local module, get the path from the local modules
       -- table and check the file timestamp
       query conn getLocalModulePathQuery (Only mn) >>= \case
-        Only path:_ -> Right . Just <$> D.getModificationTime path
+        Only path:_ -> Right <$> D.getModificationTime path
         _ -> do
           -- Check if it's a dependency, return a neverrebuild policy
           query conn hasPackageModuleQuery (Only mn) >>= \case
             Only (_ :: P.ModuleName):_ -> pure $ Left P.RebuildNever
-            _ -> pure $ Right Nothing
+            _ -> P.internalError $ "Undefined module " <> P.renderModuleName mn
 
     getOutputTimestamp mn = liftIO $ withMVar mv $ \conn -> do
       -- If it's a local module, read the timestamp from the local modules table
@@ -435,19 +471,14 @@ buildMakeActions' subdir filePathMap foreigns = do
           query conn hasPackageModuleQuery (Only mn) >>= \case
             Only (_ :: P.ModuleName):_ -> Just <$> getCurrentTime
             _ -> pure Nothing
-      -- If it's a local module, return the timestamp of the input file
 
-    -- getOutputTimestamp mn = withMVar mv $ \conn -> do
-    --   liftIO $ putStrLn $ "Getting timestamp for module " <> P.renderModuleName mn
-    --   liftIO (query conn readPackageExternsQuery (Only mn)) >>= \case
-    --     [Only externs] -> pure $ Just externs
-    --     [] -> pure Nothing
-    --     _ -> P.internalError $ "Ambiguous module " <> P.renderModuleName mn
 
   pure (buildMakeActions outDir filePathMap foreigns moUsePrefix) {
     readExternsFile,
     getInputTimestamp,
-    getOutputTimestamp
+    getOutputTimestamp,
+    getCachedExterns,
+    storeExternsFile
     }
 
 

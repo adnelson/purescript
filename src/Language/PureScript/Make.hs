@@ -10,6 +10,8 @@ module Language.PureScript.Make
 
 import           Prelude.Compat
 
+import           Data.Time.Clock (UTCTime, getCurrentTime)
+import           Control.Concurrent.Async.Lifted (forConcurrently)
 import           Control.Concurrent.Lifted as C
 import           Control.Monad hiding (sequence)
 import           Control.Monad.Error.Class (MonadError(..))
@@ -34,6 +36,7 @@ import           Language.PureScript.Externs
 import           Language.PureScript.Linter
 import           Language.PureScript.ModuleDependencies
 import           Language.PureScript.Names
+import           Language.PureScript.Parser.Declarations
 import           Language.PureScript.Renamer
 import           Language.PureScript.Sugar
 import           Language.PureScript.TypeChecker
@@ -44,6 +47,7 @@ import           Language.PureScript.Make.Monad as Monad
 import qualified Language.PureScript.CoreFn as CF
 import           System.Directory (doesFileExist)
 import           System.FilePath (replaceExtension)
+import           System.IO.UTF8 (readUTF8FileT)
 
 -- | Rebuild a single module.
 --
@@ -80,6 +84,49 @@ rebuildModule MakeActions{..} externs m@(Module _ _ moduleName _ _) = do
   ffiCodegen renamed
   evalSupplyT nextVar' . codegen renamed env' . encode $ exts
   return exts
+
+parseModuleByName
+  :: forall m
+   . (Monad m, MonadIO m, MonadBaseControl IO m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+  => MakeActions m
+  -> Maybe PackageName
+  -> ModuleName
+  -> m Module
+parseModuleByName MakeActions{..} pkgName modName = do
+  path <- getModulePath pkgName modName
+  contents <- liftIO $ readUTF8FileT path
+  case parseModuleFromFile id (path, contents) of
+    Left err -> throwError $ errorMessage $ ErrorParsingModule err
+    Right (_, modl) -> pure modl
+
+buildModuleNamed
+  :: forall m
+   . (Monad m, MonadIO m, MonadBaseControl IO m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+  => MakeActions m
+  -> ModuleName
+  -> Maybe PackageName
+  -> m (ExternsFile, UTCTime)
+buildModuleNamed ma@(MakeActions{..}) moduleName pkgName = do
+  cached <- getCachedExterns moduleName pkgName
+  getInputTimestamp moduleName >>= \case
+    Left _ -> error "idk"
+    Right inputStamp -> do
+      externsAndStamps :: [(ExternsFile, UTCTime)] <- undefined -- do
+  --    parU' (getModuleImports m) buildModuleByName
+      let stamps :: [UTCTime] = map snd externsAndStamps
+      let comparisonStamp :: UTCTime = inputStamp -- maximum $ inputStamp : stamps
+      let rebuild = do
+            stamp <- liftIO getCurrentTime
+            modl <- parseModuleByName ma pkgName moduleName
+            externs <- rebuildModule ma (map fst externsAndStamps) modl
+            storeExternsFile moduleName externs stamp pkgName
+            pure (externs, stamp)
+
+      case cached of
+        Nothing -> rebuild
+        Just (_, stamp) | comparisonStamp > stamp -> rebuild
+        Just (externs, stamp) -> pure (externs, stamp)
+
 
 -- | Compiles in "make" mode, compiling each module separately to a @.js@ file and an @externs.json@ file.
 --
@@ -152,7 +199,7 @@ make ma@MakeActions{..} ms = do
     let
       complete :: Either MultipleErrors (MultipleErrors, ExternsFile) -> m ()
       complete = BuildPlan.markComplete buildPlan moduleName
-    flip catchError (complete . Left) $ do -- (complete Nothing . Just) $ do
+    flip catchError (complete . Left) $ do
       liftIO $ putStrLn $ "Building module " <> renderModuleName moduleName <> " with deps " <> show deps
       -- We need to wait for dependencies to be built, before checking if the current
       -- module should be rebuilt, so the first thing to do is to wait on the

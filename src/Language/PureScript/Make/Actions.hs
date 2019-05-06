@@ -17,6 +17,7 @@ import           Control.Monad.Supply
 import           Control.Monad.Trans.Class (MonadTrans(..))
 import           Control.Monad.Writer.Class (MonadWriter(..))
 import           Data.Aeson (encode, decode)
+import           Data.Text (Text)
 import qualified Data.ByteString.Lazy as B
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.ByteString.Lazy.UTF8 as LBU8
@@ -24,7 +25,7 @@ import           Data.Either (partitionEithers)
 import           Data.Foldable (for_, minimum)
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as M
-import           Data.Maybe (fromMaybe)
+import           Data.Maybe (fromMaybe, catMaybes)
 import qualified Data.Set as S
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -84,7 +85,7 @@ renderProgressMessage (CompilingModule mn) = "Compiling " ++ T.unpack (runModule
 --
 -- * The details of how files are read/written etc.
 data MakeActions m = MakeActions
-  { getInputTimestamp :: ModuleName -> m (Either RebuildPolicy (Maybe UTCTime))
+  { getInputTimestamp :: ModuleName -> m (Either RebuildPolicy UTCTime)
   -- ^ Get the timestamp for the input file(s) for a module. If there are multiple
   -- files (@.purs@ and foreign files, for example) the timestamp should be for
   -- the most recently modified file.
@@ -94,6 +95,14 @@ data MakeActions m = MakeActions
   -- output files are missing.
   , readExternsFile :: ModuleName -> m (Maybe ExternsFile)
   -- ^ Return the parsed externs file for a module, if one has been computed.
+  , storeExternsFile :: ModuleName -> ExternsFile -> UTCTime -> Maybe PackageName -> m ()
+  -- ^ Record externs which have been compiled, along with when.
+  , getCachedExterns :: ModuleName -> Maybe PackageName -> m (Maybe (ExternsFile, UTCTime))
+  -- ^ Given a module name (possibly disambiguated by package name),
+  -- return the externs for the module, if they've been
+  -- computed. Fails if there is ambiguity.
+  , getModulePath :: Maybe PackageName -> ModuleName -> m FilePath
+  -- ^ Return the path to the source code of a module.
   , codegen :: CF.Module CF.Ann -> Environment -> Externs -> SupplyT m ()
   -- ^ Run the code generator for the module and write any required output files.
   , ffiCodegen :: CF.Module CF.Ann -> m ()
@@ -113,16 +122,22 @@ buildMakeActions
   -> Bool
   -- ^ Generate a prefix comment?
   -> MakeActions Make
-buildMakeActions outputDir filePathMap foreigns usePrefix =
-    MakeActions getInputTimestamp getOutputTimestamp readExterns codegen ffiCodegen progress
+buildMakeActions outputDir filePathMap foreigns usePrefix = MakeActions {..}
   where
 
-  getInputTimestamp :: ModuleName -> Make (Either RebuildPolicy (Maybe UTCTime))
+  storeExternsFile _ _ _ _ = pure ()
+
+  getCachedExterns _mod _pkg = pure Nothing
+
+  getInputTimestamp :: ModuleName -> Make (Either RebuildPolicy UTCTime)
   getInputTimestamp mn = do
     let path = fromMaybe (internalError "Module has no filename in 'make'") $ M.lookup mn filePathMap
-    e1 <- traverse getTimestamp path
-    fPath <- maybe (return Nothing) getTimestamp $ M.lookup mn foreigns
-    return $ fmap (max fPath) e1
+    lookup <- traverse getTimestamp path
+    forM lookup $ \maybStamp -> do
+      foreignStamp <- join <$> forM (M.lookup mn foreigns) getTimestamp
+      case catMaybes [maybStamp, foreignStamp] of
+        [] -> internalError $ "Couldn't find timestamps for " <> renderModuleName mn
+        stamps -> pure $ maximum stamps
 
   outputFilename :: ModuleName -> String -> FilePath
   outputFilename mn fn =
@@ -232,16 +247,16 @@ buildMakeActions outputDir filePathMap foreigns usePrefix =
       then Just <$> getModificationTime path
       else pure Nothing
 
-  writeTextFile :: FilePath -> B.ByteString -> Make ()
-  writeTextFile path text = makeIO (const (ErrorMessage [] $ CannotWriteFile path)) $ do
-    mkdirp path
-    B.writeFile path text
-    where
-    mkdirp :: FilePath -> IO ()
-    mkdirp = createDirectoryIfMissing True . takeDirectory
-
   progress :: ProgressMessage -> Make ()
   progress = liftIO . putStrLn . renderProgressMessage
+
+writeTextFile :: FilePath -> B.ByteString -> Make ()
+writeTextFile path text = makeIO (const (ErrorMessage [] $ CannotWriteFile path)) $ do
+  mkdirp path
+  B.writeFile path text
+  where
+  mkdirp :: FilePath -> IO ()
+  mkdirp = createDirectoryIfMissing True . takeDirectory
 
 -- | Check that the declarations in a given PureScript module match with those
 -- in its corresponding foreign module.
@@ -297,3 +312,52 @@ checkForeignDecls m path = do
     try s = either (const (Left str)) Right $ do
       ts <- PSParser.lex "" s
       PSParser.runTokenParser "" (PSParser.parseIdent <* Parsec.eof) ts
+
+{-
+defaultCodegen :: CF.Module CF.Ann -> Environment -> Externs -> M.Map ModuleName FilePath -> SupplyT Make ()
+defaultCodegen m _ exts foreigns = do
+  let mn = CF.moduleName m
+  lift $ writeTextFile (outputFilename mn "externs.json") exts
+  codegenTargets <- lift $ asks optionsCodegenTargets
+  when (S.member CoreFn codegenTargets) $ do
+    let coreFnFile = targetFilename mn CoreFn
+        json = CFJ.moduleToJSON Paths.version m
+    lift $ writeTextFile coreFnFile (encode json)
+  when (S.member JS codegenTargets) $ do
+    foreignInclude <- case mn `M.lookup` foreigns of
+      Just _
+        | not $ requiresForeign m -> do
+            return Nothing
+        | otherwise -> do
+            return $ Just $ Imp.App Nothing (Imp.Var Nothing "require") [Imp.StringLiteral Nothing "./foreign.js"]
+      Nothing | requiresForeign m -> throwError . errorMessage' (CF.moduleSourceSpan m) $ MissingFFIModule mn
+              | otherwise -> return Nothing
+    rawJs <- J.moduleToJs m foreignInclude
+    dir <- lift $ makeIO (const (ErrorMessage [] $ CannotGetFileInfo ".")) getCurrentDirectory
+    let sourceMaps = S.member JSSourceMap codegenTargets
+        (pjs, mappings) = if sourceMaps then prettyPrintJSWithSourceMaps rawJs else (prettyPrintJS rawJs, [])
+        jsFile = targetFilename mn JS
+        mapFile = targetFilename mn JSSourceMap
+        prefix = ["Generated by purs version " <> T.pack (showVersion Paths.version) | usePrefix]
+        js = T.unlines $ map ("// " <>) prefix ++ [pjs]
+        mapRef = if sourceMaps then "//# sourceMappingURL=index.js.map\n" else ""
+    lift $ do
+      writeTextFile jsFile (B.fromStrict $ TE.encodeUtf8 $ js <> mapRef)
+      when sourceMaps $ genSourceMap dir mapFile (length prefix) mappings
+
+defaultFfiCodegen :: CF.Module CF.Ann -> Make ()
+defaultFfiCodegen m = do
+  codegenTargets <- asks optionsCodegenTargets
+  when (S.member JS codegenTargets) $ do
+    let mn = CF.moduleName m
+        foreignFile = outputFilename mn "foreign.js"
+    case mn `M.lookup` foreigns of
+      Just path
+        | not $ requiresForeign m ->
+            tell $ errorMessage' (CF.moduleSourceSpan m) $ UnnecessaryFFIModule mn path
+        | otherwise ->
+            checkForeignDecls m path
+      Nothing | requiresForeign m -> throwError . errorMessage' (CF.moduleSourceSpan m) $ MissingFFIModule mn
+              | otherwise -> return ()
+    for_ (mn `M.lookup` foreigns) (readTextFile >=> writeTextFile foreignFile)
+-}

@@ -174,7 +174,6 @@ instance FromJSONKey ModuleName
 instance ToField ModuleName where toField = toField . runModuleName
 instance FromField ModuleName where fromField f = moduleNameFromString <$> fromField f
 
-
 runModuleName :: ModuleName -> Text
 runModuleName (ModuleName pns) = T.intercalate "." (runProperName <$> pns)
 
@@ -201,6 +200,12 @@ addModuleName name (ModuleName names) = ModuleName (names <> [name])
 moduleNameToRelPath :: ModuleName -> FilePath
 moduleNameToRelPath (ModuleName names) =
   T.unpack $ T.intercalate "/" (map runProperName names)
+
+-- | TODO: make a smart constructor for this
+newtype PackageName = PackageName Text deriving (Show)
+
+instance ToField PackageName where
+  toField (PackageName name) = toField name
 
 -- |
 -- A qualified name, i.e. a name with an optional module name

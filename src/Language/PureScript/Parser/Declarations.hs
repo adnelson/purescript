@@ -37,6 +37,7 @@ import           Language.PureScript.Parser.Lexer
 import           Language.PureScript.Parser.Types
 import           Language.PureScript.PSString (PSString, mkString)
 import           Language.PureScript.Types
+import           System.IO.UTF8 (readUTF8FileT)
 import qualified Text.Parsec as P
 import qualified Text.Parsec.Expr as P
 

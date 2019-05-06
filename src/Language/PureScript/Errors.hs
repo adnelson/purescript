@@ -10,8 +10,10 @@ import           Prelude.Compat
 import           Protolude (ordNub)
 
 import           Control.Arrow ((&&&))
+import           Control.Concurrent.Async.Lifted (forConcurrently)
 import           Control.Monad
 import           Control.Monad.Error.Class (MonadError(..))
+import           Control.Monad.Trans.Control (MonadBaseControl(..))
 import           Control.Monad.Trans.State.Lazy
 import           Control.Monad.Writer
 import           Data.Char (isSpace)
@@ -530,7 +532,7 @@ prettyPrintSingleError (PPEOptions codeColor full level showDocs relPath) e = fl
     renderSimpleErrorMessage (UnknownName name@(Qualified Nothing (IdentName (Ident i)))) | i `elem` [ C.bind, C.discard ] =
       line $ "Unknown " <> printName name <> ". You're probably using do-notation, which the compiler replaces with calls to the " <> markCode i <> " function. Please import " <> markCode i <> " from module " <> markCode "Prelude"
     renderSimpleErrorMessage (UnknownName name) =
-      line $ "!!!Unknown " <> printName name
+      line $ "Unknown " <> printName name
     renderSimpleErrorMessage (UnknownImport mn name) =
       paras [ line $ "Cannot import " <> printName (Qualified Nothing name) <> " from module " <> markCode (runModuleName mn)
             , line "It either does not exist or the module does not export it."
@@ -1503,6 +1505,24 @@ parU
   -> m [b]
 parU xs f =
     forM xs (withError . f) >>= collectErrors
+  where
+    withError :: m b -> m (Either MultipleErrors b)
+    withError u = catchError (Right <$> u) (return . Left)
+
+    collectErrors :: [Either MultipleErrors b] -> m [b]
+    collectErrors es = case partitionEithers es of
+      ([], rs) -> return rs
+      (errs, _) -> throwError $ fold errs
+
+-- | Collect errors in in parallel (actually runs things in parallel!)
+parU'
+  :: forall m a b
+   . (MonadBaseControl IO m, MonadError MultipleErrors m)
+  => [a]
+  -> (a -> m b)
+  -> m [b]
+parU' xs f =
+    forConcurrently xs (withError . f) >>= collectErrors
   where
     withError :: m b -> m (Either MultipleErrors b)
     withError u = catchError (Right <$> u) (return . Left)

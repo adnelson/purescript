@@ -212,12 +212,12 @@ construct MakeActions{..} sorted graph dependencyExterns = do
           inputTimestamp <- getInputTimestamp moduleName -- timestamp of the source file
           let
             existingExtern = case (inputTimestamp, dependencyTimestamp, outputTimestamp) of
-              (Right (Just t1), Just t3, Just t2) ->
+              (Right t1, Just t3, Just t2) ->
                 -- The source file has a timestamp which is newer than the output,
                 -- or one of its dependencies is newer than the output,
                 -- Then the output must be rebuilt, a.k.a. return Nothing.
                 if t1 > t2 || t3 > t2 then Nothing else Just t2
-              (Right (Just t1), Nothing, Just t2) ->
+              (Right t1, Nothing, Just t2) ->
                 -- The source file has a timestamp which is newer than the output,
                 -- And there are no dependency timestamps.
                 -- Then the output must be rebuilt.
