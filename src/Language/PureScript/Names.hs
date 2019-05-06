@@ -199,13 +199,15 @@ addModuleName name (ModuleName names) = ModuleName (names <> [name])
 -- | Convert a module name to its expected path relative to source root.
 moduleNameToRelPath :: ModuleName -> FilePath
 moduleNameToRelPath (ModuleName names) =
-  T.unpack $ T.intercalate "/" (map runProperName names)
+  T.unpack $ T.intercalate "/" (map runProperName names) <> ".purs"
 
 -- | TODO: make a smart constructor for this
-newtype PackageName = PackageName Text deriving (Show)
+newtype PackageName = PackageName Text deriving (Show, Eq)
 
 instance ToField PackageName where
   toField (PackageName name) = toField name
+instance FromField PackageName where
+  fromField f =  PackageName <$> fromField f
 
 -- |
 -- A qualified name, i.e. a name with an optional module name

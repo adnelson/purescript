@@ -4,6 +4,7 @@ module Language.PureScript.Make
   rebuildModule
   , make
   , inferForeignModules
+  , buildModuleNamed
   , module Monad
   , module Actions
   ) where
