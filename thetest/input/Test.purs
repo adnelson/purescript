@@ -1,4 +1,9 @@
 module Test where
 
-foo :: Int
-foo = 1
+import Prelude
+
+-- class Bleep a where
+--   bleep :: a -> String
+
+foo :: String
+foo = show 1
