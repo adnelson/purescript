@@ -13,11 +13,14 @@ import Control.Concurrent.MVar.Lifted
 import Control.Concurrent.Async.Lifted
 import qualified Crypto.Hash.MD5 as MD5
 import qualified Data.ByteString.Char8 as B8
+-- import Data.Aeson (encode)
+
+import Data.List (foldl')
 import Data.Map (Map)
 import qualified Data.Map as M
-import System.IO.UTF8 (readUTF8FileT)
+import qualified Data.Text.Encoding as T
 import Database.SQLite.Simple
-import Control.Monad.IO.Class
+import Control.Monad.Base
 import Control.Monad.Supply
 import Control.Monad.Trans.Control (MonadBaseControl(..))
 import Control.Monad.Error.Class (MonadError(..))
@@ -27,12 +30,15 @@ import Control.Monad.Reader.Class (MonadReader(..), asks)
 
 import Language.PureScript.Names
 import Language.PureScript.AST
-import Language.PureScript.Errors (MultipleErrors(..), parU')
+import Language.PureScript.Errors (MultipleErrors(..), errorMessage)
 import qualified Language.PureScript.CoreFn as CF
-import Language.PureScript.Externs (ExternsFile(..), efImportedModuleNames)
-import Language.PureScript.Make
+import Language.PureScript.Environment
+import Language.PureScript.Externs
 import Language.PureScript.Linter
-import Language.PureScript.Sugar (desugar)
+import qualified Language.PureScript.Parser as P
+import Language.PureScript.Renamer (renameInModules)
+import Language.PureScript.Sugar (desugar, desugarCaseGuards, createBindingGroups, collapseBindingGroups)
+import Language.PureScript.TypeChecker
 
 
 -- This outlines a hash-based approach for package compilation. The building blocks:
@@ -41,7 +47,7 @@ import Language.PureScript.Sugar (desugar)
 -- and the unique has of the compilation.
 
 type Job = Async (ExternsFile, Hash)
-type Jobs = Map ModuleRef Job
+type Jobs = Map ResolvedModuleRef Job
 type Hash = B8.ByteString
 
 data CachedBuild = CachedBuild {
@@ -58,23 +64,29 @@ data CachedBuild = CachedBuild {
 data ResolvedModuleRef
   = LocalModule !ModuleName
   | PackageModule !PackageName !ModuleName
-  deriving (Show)
+  deriving (Show, Eq, Ord)
 
-data BuildVars = BuildVars {
+data BuildVars m = BuildVars {
   bvConn :: MVar Connection,
-  bvPathSearches :: MVar (Map ModuleRef (Async (ResolvedModuleRef, FilePath))),
-  bvExternCompiles :: MVar (Map ModuleRef (Async (ExternsFile, Hash)))
+  bvPathSearches :: MVar (Map ModuleRef (Async (StM m (ResolvedModuleRef, FilePath)))),
+  bvExternCompiles :: MVar (Map ResolvedModuleRef (Async (StM m (ExternsFile, Hash))))
   }
 
-type Build m = (MonadIO m, MonadBaseControl IO m, MonadReader BuildVars m,
+type Build m = (MonadBaseControl IO m, MonadReader (BuildVars m) m,
                 MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+
+throwSimpleError :: Build m => SimpleErrorMessage -> m a
+throwSimpleError msg = throwError $ errorMessage msg
 
   -- Use a join on the module source table to get the path.
 getCachedBuildFromDatabase :: Build m => ModuleRef -> m (Maybe CachedBuild)
-getCachedBuildFromDatabase mref = error "getCachedBuildFromDatabase " <> show mref
+getCachedBuildFromDatabase mref = error $ "getCachedBuildFromDatabase " <> show mref
 
 cacheBuildInDatabase :: Build m => CachedBuild -> m ()
-cacheBuildInDatabase _ = error "cacheBuildInDatabase " <> show mref
+cacheBuildInDatabase _ = error $ "cacheBuildInDatabase"
+
+getPathToModule :: Query
+getPathToModule = undefined
 
 compileModule :: Build m => [ExternsFile] -> Module -> m ExternsFile
 compileModule externs modl = do
@@ -85,7 +97,7 @@ compileModule externs modl = do
   ((Module ss coms _ elaborated exps, env'), nextVar) <- runSupplyT 0 $ do
     desugar externs [withPrim] >>= \case
       [desugared] -> runCheck' (emptyCheckState env) $ typeCheckModule desugared
-      _ -> internalError "desugar did not return a singleton"
+      _ -> error "desugar did not return a singleton"
 
   -- desugar case declarations *after* type- and exhaustiveness checking
   -- since pattern guards introduces cases which the exhaustiveness checker
@@ -93,6 +105,7 @@ compileModule externs modl = do
   (deguarded, nextVar') <- runSupplyT nextVar $ do
     desugarCaseGuards elaborated
 
+  let moduleName = getModuleName modl
   regrouped <- createBindingGroups moduleName . collapseBindingGroups $ deguarded
   let mod' = Module ss coms moduleName regrouped exps
       corefn = CF.moduleToCoreFn env' mod'
@@ -100,39 +113,43 @@ compileModule externs modl = do
       [renamed] = renameInModules [optimized]
       exts = moduleToExternsFile mod' env'
   ffiCodegen renamed
-  evalSupplyT nextVar' . codegen renamed env' . encode $ exts
+  -- evalSupplyT nextVar' . codegen renamed env' . encode $ exts
   return exts
 
-parseModule :: Build m => B8.ByteString -> m Module
-parseModule source = case runTokenParser parseModule (B8.unpack source) of
-  Left err -> throwError $ ErrorParsingModule err
-  Right modl -> pure modl
+parseModule :: Build m => FilePath -> B8.ByteString -> m Module
+parseModule path source = do
+  case P.lex path (T.decodeUtf8 source) >>= P.runTokenParser path P.parseModule of
+    Left err -> throwSimpleError $ ErrorParsingModule err
+    Right modl -> pure modl
 
-getSourcePath :: Build m => ModuleRef -> m (Async (ResolvedModuleRef, FilePath))
+getSourcePath :: Build m => ModuleRef -> m (Async (StM m (ResolvedModuleRef, FilePath)))
 getSourcePath mref = do
   mv <- asks bvPathSearches
   modifyMVar mv $ \searches -> case M.lookup mref searches of
-    Just search -> pure (searches, searches)
+    Just search -> pure (searches, search)
     Nothing -> do
       search <- async $ getSourcePathDBCached mref
-      pure (search, M.insert mref search searches)
+      pure (M.insert mref search searches, search)
 
 -- | Look up the path to a module on disk. These are cached in the database.
 -- At this step we can also determine if a module is local or packaged.
 getSourcePathDBCached :: Build m => ModuleRef -> m (ResolvedModuleRef, FilePath)
 getSourcePathDBCached mref@(ModuleReference maybePkgName mname) = do
-  mv <- bvConn
+  mv <- asks bvConn
   withMVar mv $ \conn -> do
     case maybePkgName of
-      Just pname -> query dbConnMV getPathToModule (pname, mref) >>= \case
+      Just pname -> liftBase (query conn getPathToModule (pname, mname)) >>= \case
         [] -> searchForModule mref
         Only path:_ -> pure (PackageModule pname mname, path)
-      Nothing -> query dbConnMV getPathToModule (Only mref) >>= \case
+      Nothing -> liftBase (query conn getPathToModule (Only mname)) >>= \case
         [] -> searchForModule mref
         [(pname', path)] -> case pname' of
           Nothing -> pure (LocalModule mname, path)
           Just p -> pure (PackageModule p mname, path)
-        _ -> throwError $ AmbiguousModule mref
+        _ -> throwSimpleError $ AmbiguousModule mref
+
+searchForModule :: Build m => ModuleRef -> m (ResolvedModuleRef, FilePath)
+searchForModule = undefined
 
 buildModuleDBCached :: Build m => ModuleRef -> m (ExternsFile, Hash)
 buildModuleDBCached mref = do
@@ -140,8 +157,8 @@ buildModuleDBCached mref = do
     Nothing -> do
       -- Get the path to the file on disk
       (rmref, path) <- wait =<< getSourcePath mref
-      source <- liftIO $ B8.readFile path
-      modl <- parseModule source
+      source <- liftBase $ B8.readFile path
+      modl <- parseModule path source
       deps <- buildModules $ someModuleNamed <$> getModuleImports modl
       let hash = MD5.finalize $ MD5.updates MD5.init (source : map snd deps)
       externs <- compileModule (map fst deps) modl
@@ -152,33 +169,32 @@ buildModuleDBCached mref = do
       deps <- buildModules $ someModuleNamed <$> efImportedModuleNames externs
       -- Hash the contents of the source file + dependency hashes to
       -- get the unique signature of the module we're building.
-      source <- liftIO $ B8.readFile path
+      source <- liftBase $ B8.readFile path
       let hash = MD5.finalize $ MD5.updates MD5.init (source : map snd deps)
       -- If the hash matches, no more work needs to be done. Otherwise build.
       if storedHash == hash then pure (externs, hash)
         else do
           -- A failure here could also be stored in the database, to
           -- prevent meaningless rebuilds...
-          externs <- parseModule source >>= compileModule (map fst deps)
-          (externs, hash) <$ cacheBuildInDatabase (CachedBuild rmref externs hash path)
+          externs' <- parseModule path source >>= compileModule (map fst deps)
+          (externs', hash) <$ cacheBuildInDatabase (CachedBuild rmref externs hash path)
 
 -- | Build a list of modules in parallel.
 buildModules :: Build m => [ModuleRef] -> m [(ExternsFile, Hash)]
 buildModules mrefs = forConcurrently mrefs $ \mref -> buildModule mref >>= wait
 
--- type Async' m a = Async (StM m
-
--- NOTE: We could maybe do cycle detection?
+-- NOTE: Is this the spot to do cycle detection?
 buildModule :: forall m. Build m => ModuleRef -> m (Async (StM m (ExternsFile, Hash)))
-buildModule mref = undefined -- do
-  -- mv <- asks bvExternCompiles
-  -- modifyMVar mv $ \jobs -> case M.lookup mref jobs of
-  --   -- If there's already a job going, wait for it to complete,
-  --   -- then cache the result.
-  --   Just job -> pure (jobs, job)
-  --   Nothing -> do
-  --     job <- async $ buildModuleDBCached mref
-  --     pure (M.insert mref job jobs, job)
+buildModule mref = do
+  (resolvedRef, _ :: FilePath) <- wait =<< getSourcePath mref
+  mv <- asks bvExternCompiles
+  modifyMVar mv $ \jobs -> case M.lookup resolvedRef jobs of
+    -- If there's already a job going, wait for it to complete,
+    -- then cache the result.
+    Just job -> pure (jobs, job)
+    Nothing -> do
+      job <- async $ buildModuleDBCached mref
+      pure (M.insert resolvedRef job jobs, job)
 
 
 -- | Could do this in two steps: the first one finds the packages that
