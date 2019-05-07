@@ -1449,6 +1449,10 @@ toTypelevelString (TypeApp _ (TypeApp _ (TypeConstructor _ f) x) ret)
     (Box.//) <$> toTypelevelString x <*> toTypelevelString ret
 toTypelevelString _ = Nothing
 
+-- | Throw a 'SimpleErrorMessage' as a 'MultipleErrors'
+throwSimpleError :: MonadError MultipleErrors m => SimpleErrorMessage -> m a
+throwSimpleError msg = throwError $ errorMessage msg
+
 -- | Rethrow an error with a more detailed error message in the case of failure
 rethrow :: (MonadError e m) => (e -> e) -> m a -> m a
 rethrow f = flip catchError (throwError . f)

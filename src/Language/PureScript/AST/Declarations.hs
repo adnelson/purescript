@@ -73,6 +73,7 @@ someModuleNamed = ModuleReference Nothing
 -- | A type of error messages
 data SimpleErrorMessage
   = ModuleNotFound ModuleName
+  | PackageNotFound PackageName
   | AmbiguousModule ModuleRef
   | ErrorParsingFFIModule FilePath (Maybe Bundle.ErrorMessage)
   | ErrorParsingModule P.ParseError
@@ -81,7 +82,7 @@ data SimpleErrorMessage
   | MissingFFIImplementations ModuleName [Ident]
   | UnusedFFIImplementations ModuleName [Ident]
   | InvalidFFIIdentifier ModuleName Text
-  | CannotFindSourceRoot FilePath
+  | CannotFindSourceRoot FilePath -- DELETEME?
   | CannotGetFileInfo FilePath
   | CannotReadFile FilePath
   | CannotWriteFile FilePath
