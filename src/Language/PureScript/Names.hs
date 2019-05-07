@@ -202,7 +202,7 @@ moduleNameToRelPath (ModuleName names) =
   T.unpack $ T.intercalate "/" (map runProperName names) <> ".purs"
 
 -- | TODO: make a smart constructor for this
-newtype PackageName = PackageName Text deriving (Show, Eq)
+newtype PackageName = PackageName Text deriving (Show, Eq, Ord)
 
 instance ToField PackageName where
   toField (PackageName name) = toField name

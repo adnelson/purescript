@@ -64,9 +64,16 @@ onTypeSearchTypesM :: (Applicative m) => (SourceType -> m SourceType) -> TypeSea
 onTypeSearchTypesM f (TSAfter i r) = TSAfter <$> traverse (traverse f) i <*> traverse (traverse (traverse f)) r
 onTypeSearchTypesM _ (TSBefore env) = pure (TSBefore env)
 
+-- | A reference to a module, possibly with a package name for disambiguation.
+data ModuleRef = ModuleReference (Maybe PackageName) ModuleName deriving (Show, Eq, Ord)
+
+someModuleNamed :: ModuleName -> ModuleRef
+someModuleNamed = ModuleReference Nothing
+
 -- | A type of error messages
 data SimpleErrorMessage
   = ModuleNotFound ModuleName
+  | AmbiguousModule ModuleRef
   | ErrorParsingFFIModule FilePath (Maybe Bundle.ErrorMessage)
   | ErrorParsingModule P.ParseError
   | MissingFFIModule ModuleName
