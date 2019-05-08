@@ -16,11 +16,17 @@ import qualified Data.ByteString.Char8 as B8
 -- import Data.Aeson (encode)
 import Language.PureScript.Build.Search
 
+import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as N
 import Data.List (foldl')
+import Data.Set (Set)
+import qualified Data.Set as S
 import Data.Map (Map)
 import qualified Data.Map as M
+import Control.Arrow ((***))
 import qualified Data.Text.Encoding as T
 import Database.SQLite.Simple
+import Control.Monad ((>=>))
 import Control.Monad.Base
 import Control.Monad.Supply
 import Control.Monad.Trans.Control (MonadBaseControl(..))
@@ -52,36 +58,70 @@ type Jobs = Map ResolvedModuleRef Job
 type Hash = B8.ByteString
 
 data CachedBuild = CachedBuild {
-  cbResolvedModuleRef :: ResolvedModuleRef,
   cbExterns :: !ExternsFile,
-  cbHash :: !Hash,
-  cbPath :: !FilePath
+  cbHash :: !Hash
   } deriving (Show)
 
 -- | Distinct from the normal moduleref type, which can refer to either a
 -- module within a particular package, or just "some module with this
 -- name". This one always refers to one or the other category of
--- module.
+-- module. It will only be instantiated if the module was discovered on disk.
 data ResolvedModuleRef
   = LocalModule !ModuleName
   | PackageModule !PackageName !ModuleName
   deriving (Show, Eq, Ord)
 
+data BuildConfig = BuildConfig {
+  bcDependentPackages :: [PackageName],
+  bcPackageLocations :: [FilePath],
+  bcLocalSourceDirectories :: NonEmpty FilePath,
+  bcEntryPoints :: NonEmpty ModuleName,
+  bcOutput :: FilePath
+  } deriving (Show, Eq)
+
+-- instance ToJSON BuildConfig where toJSON = genericToJSON defaultOptions
+-- instance FromJSON BuildConfig where parseJSON = genericParseJSON defaultOptions
+
+type PrecompiledRecord = (ModuleName, ExternsFile, Hash)
+type ModuleRecord = Map ModuleName (ExternsFile, Hash)
+type AsyncLoad m a = Async (StM m a)
+type AsyncLoads m k a = MVar (Map k (AsyncLoad m a))
+
 data BuildVars m = BuildVars {
+  bvConfig :: BuildConfig,
   bvConn :: MVar Connection,
-  bvPathSearches :: MVar (Map ModuleRef (Async (StM m (ResolvedModuleRef, FilePath)))),
-  bvExternCompiles :: MVar (Map ResolvedModuleRef (Async (StM m (ExternsFile, Hash))))
+  bvPackageRecords :: AsyncLoads m PackageName PackageRecord,
+  bvPackageLoads :: AsyncLoads m PackageName ModuleRecord,
+  bvPathSearches :: AsyncLoads m ModuleRef (ResolvedModuleRef, FilePath),
+  bvExternCompiles :: AsyncLoads m ResolvedModuleRef (ExternsFile, Hash)
   }
 
 type Build m = (MonadBaseControl IO m, MonadReader (BuildVars m) m,
                 MonadError MultipleErrors m, MonadWriter MultipleErrors m)
 
-  -- Use a join on the module source table to get the path.
-getCachedBuildFromDatabase :: Build m => ModuleRef -> m (Maybe CachedBuild)
-getCachedBuildFromDatabase mref = error $ "getCachedBuildFromDatabase " <> show mref
+loadAsync
+  :: forall m k a. (Ord k, Build m)
+  => (BuildVars m -> AsyncLoads m k a)
+  -> (k -> m a)
+  -> k
+  -> m (AsyncLoad m a)
+loadAsync getMVars fromScratch key = do
+  mv <- asks getMVars
+  modifyMVar mv $ \(asyncs :: Map k (AsyncLoad m a)) -> case M.lookup key asyncs of
+    -- If there's already a job going, wait for it to complete,
+    -- then cache the result.
+    Just asy -> pure (asyncs, asy)
+    Nothing -> do
+      asy <- async $ fromScratch key
+      pure (M.insert key asy asyncs, asy)
 
-cacheBuildInDatabase :: Build m => CachedBuild -> m ()
-cacheBuildInDatabase _ = error $ "cacheBuildInDatabase"
+
+  -- Use a join on the module source table to get the path.
+getCachedBuildFromDatabase :: Build m => ResolvedModuleRef -> m (Maybe CachedBuild)
+getCachedBuildFromDatabase rmref = error $ "getCachedBuildFromDatabase " <> show rmref
+
+cacheBuildInDatabase :: Build m => ResolvedModuleRef -> CachedBuild -> m ()
+cacheBuildInDatabase _ _ = error $ "cacheBuildInDatabase"
 
 getPathToModuleQ :: Query
 getPathToModuleQ = undefined
@@ -149,10 +189,53 @@ getSourcePathCached mref@(ModuleReference maybePkgName mname) = do
           Just p -> pure (PackageModule p mname, path)
         _ -> throwSimpleError $ AmbiguousModule mref
 
-type PrecompiledRecord = (ModuleName, ExternsFile, Hash)
+data ModuleMetadata = ModuleMetadata FilePath Hash (Set ResolvedModuleRef)
+data PackageRecord = PackageRecord (Map ModuleName ModuleMetadata)
 
-loadPackage :: Build m => PackageName -> m (Async (StM m (Map ModuleName (ExternsFile, Hash))))
-loadPackage pname = do
+getPackageRecord :: forall m. Build m => PackageName -> m (AsyncLoad m PackageRecord)
+getPackageRecord = loadAsync bvPackageRecords $ \pkgName -> do
+  BuildVars { bvConfig = BuildConfig {..}, ..} <- ask
+  withMVar bvConn $ \conn -> do
+    liftBase (query getPackageRecordQ pkgName) >>= \case
+      [] -> discoverPackage pkgName bcPackageLocations >>= \case
+        Uncompiled (ModulesAndRoot root modNames) -> _x :: m PackageRecord
+        Precompiled dbPath -> _y :: m PackageRecord
+      _modNames -> _z :: m PackageRecord
+
+{-
+
+CREATE TABLE module_meta (
+  name TEXT NOT NULL,
+  -- Null if there's no source code available
+  path TEXT,
+  hash BLOB NOT NULL
+);
+
+CREATE TABLE module_depends (
+  module_meta INT NOT NULL,
+  depends INT NOT NULL,
+  FOREIGN KEY (module_meta) REFERENCES module_meta(rowid) ON DELETE CASCADE,
+  FOREIGN KEY (depends) REFERENCES module_meta(rowid) ON DELETE CASCADE
+);
+
+CREATE TABLE package (
+  -- Name of the package. Empty string means current package.
+  name TEXT NOT NULL UNIQUE,
+  hash BLOB NOT NULL
+);
+
+CREATE TABLE package_module_meta (
+  package INT NOT NULL,
+  module_meta INT NOT NULL,
+  FOREIGN KEY (package) REFERENCES package(rowid) ON DELETE CASCADE,
+  FOREIGN KEY (module_meta) REFERENCES module_meta(rowid) ON DELETE CASCADE
+);
+
+-}
+
+
+loadPackage :: Build m => PackageName -> m (Async (StM m ModuleRecord))
+loadPackage pname = undefined {- do
   (connMV, locations) <- (,) <$> asks bvPackageLocations <*> asks bvConn
   -- TODO check a cache here?
   discoverPackage pname locations >>= \case
@@ -176,8 +259,12 @@ loadPackage pname = do
         executeMany conn addPackageModuleQuery rows
         putStrLn $ "Imported " <> show (length pkgModules) <> " modules from " <> show n
 
+-}
+
+
 searchForModule :: Build m => ModuleRef -> m (ResolvedModuleRef, FilePath)
 searchForModule (ModuleReference maybePkg modName) = case maybePkg of
+  _ -> undefined {-
   Just pname -> do
     -- The package needs to exist
     asks bvPackageLocations >>= discoverPackage pname >>= \case
@@ -189,24 +276,24 @@ searchForModule (ModuleReference maybePkg modName) = case maybePkg of
     -- Refresh package list.
     forM_ pNames $ do
       discovered <- discoverPackage pName
+
     --
     asks bvLocalModuleRoots >>= discoverLocalModules >>= \case
       _ -> error "not sure"
+-}
 
-buildModuleCached :: Build m => ModuleRef -> m (ExternsFile, Hash)
-buildModuleCached mref = do
-  getCachedBuildFromDatabase mref >>= \case
+buildModuleCached :: Build m => ResolvedModuleRef -> FilePath -> m (ExternsFile, Hash)
+buildModuleCached rmref path = do
+  getCachedBuildFromDatabase rmref >>= \case
     Nothing -> do
-      -- Get the path to the file on disk
-      (rmref, path) <- wait =<< getSourcePath mref
       source <- liftBase $ B8.readFile path
       modl <- parseModule path source
       deps <- buildModules $ someModuleNamed <$> getModuleImports modl
       let hash = MD5.finalize $ MD5.updates MD5.init (source : map snd deps)
       externs <- compileModule (map fst deps) modl
-      (externs, hash) <$ cacheBuildInDatabase (CachedBuild rmref externs hash path)
+      (externs, hash) <$ cacheBuildInDatabase rmref (CachedBuild externs hash)
 
-    Just (CachedBuild rmref externs storedHash path) -> do
+    Just (CachedBuild externs storedHash) -> do
       -- Build dependencies first.
       deps <- buildModules $ someModuleNamed <$> efImportedModuleNames externs
       -- Hash the contents of the source file + dependency hashes to
@@ -219,28 +306,28 @@ buildModuleCached mref = do
           -- A failure here could also be stored in the database, to
           -- prevent meaningless rebuilds...
           externs' <- parseModule path source >>= compileModule (map fst deps)
-          (externs', hash) <$ cacheBuildInDatabase (CachedBuild rmref externs hash path)
+          (externs', hash) <$ cacheBuildInDatabase rmref (CachedBuild externs hash)
 
 -- | Build a list of modules in parallel.
 buildModules :: Build m => [ModuleRef] -> m [(ExternsFile, Hash)]
-buildModules mrefs = forConcurrently mrefs $ \mref -> buildModule mref >>= wait
+buildModules = mapM (buildModule >=> wait)
 
 -- NOTE: Is this the spot to do cycle detection?
 buildModule :: forall m. Build m => ModuleRef -> m (Async (StM m (ExternsFile, Hash)))
 buildModule mref = do
-  (resolvedRef, _ :: FilePath) <- wait =<< getSourcePath mref
-  buildResolvedModule resolvedRef
+  (resolvedRef, path) <- getSourcePath mref >>= wait
+  buildResolvedModule resolvedRef path
 
 buildResolvedModule
-  :: forall m. Build m => ResolvedModuleRef -> m (Async (StM m (ExternsFile, Hash)))
-buildResolvedModule resolvedRef = do
+  :: forall m. Build m => ResolvedModuleRef -> FilePath -> m (Async (StM m (ExternsFile, Hash)))
+buildResolvedModule resolvedRef path = do
   mv <- asks bvExternCompiles
   modifyMVar mv $ \jobs -> case M.lookup resolvedRef jobs of
     -- If there's already a job going, wait for it to complete,
     -- then cache the result.
     Just job -> pure (jobs, job)
     Nothing -> do
-      job <- async $ buildModuleCached mref
+      job <- async $ buildModuleCached resolvedRef path
       pure (M.insert resolvedRef job jobs, job)
 
 
