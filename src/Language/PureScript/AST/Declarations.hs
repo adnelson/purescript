@@ -72,8 +72,9 @@ someModuleNamed = ModuleReference Nothing
 
 -- | A type of error messages
 data SimpleErrorMessage
-  = ModuleNotFound ModuleName
-  | PackageNotFound PackageName
+  = PackageNotFound PackageName
+  | ModuleNotFound ModuleName -- failed unqualified module reference
+  | ModuleNotFoundInPackage PackageName ModuleName -- failed qualified module reference
   | AmbiguousModule ModuleRef
   | ErrorParsingFFIModule FilePath (Maybe Bundle.ErrorMessage)
   | ErrorParsingModule P.ParseError

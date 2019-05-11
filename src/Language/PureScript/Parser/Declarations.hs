@@ -304,6 +304,8 @@ parseModuleDeclaration = do
   reserved "where"
   pure (name, exports)
 
+
+
 -- | Parse a module header and a collection of declarations
 parseModule :: TokenParser Module
 parseModule = do
