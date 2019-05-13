@@ -16,6 +16,7 @@ import Control.Concurrent.Async.Lifted
 import qualified Crypto.Hash.MD5 as MD5
 import qualified Data.ByteString.Char8 as B8
 import Control.Monad.State.Strict
+import qualified System.Directory as D
 -- import Data.Aeson (encode)
 
 import Database.SQLite.Simple (Connection, Only(..))
@@ -71,12 +72,18 @@ data BuildVars m = BuildVars {
   bvConfig :: BuildConfig,
   bvConn :: MVar SQLite.Connection,
   bvPackageModules :: AsyncLoads m PackageRef (FilePath, Map ModuleName FilePath),
-  bvPackagePaths :: AsyncLoads m PackageName FilePath,
+  -- ^ Cached modules contained in a package (unvalidated)..
+
   bvPackageRecords :: AsyncLoads m PackageRef PackageRecord,
-  bvModules :: AsyncLoads m ModuleRef (ResolvedModuleRef, FilePath),
-  bvModulePaths :: AsyncLoads m ResolvedModuleRef FilePath,
-  bvModuleRefs :: AsyncLoads m ResolvedModuleRef (Set ResolvedModuleRef, ModuleHash),
+  -- ^ Caches the full dependency tree of modules within a package.
+
   bvExternCompiles :: AsyncLoads m ResolvedModuleRef (ExternsFile, ModuleHash)
+  -- ^ Caches built modules.
+
+--  bvPackagePaths :: AsyncLoads m PackageName FilePath,
+--  bvModules :: AsyncLoads m ModuleRef (ResolvedModuleRef, FilePath),
+--  bvModulePaths :: AsyncLoads m ResolvedModuleRef FilePath,
+--  bvModuleRefs :: AsyncLoads m ResolvedModuleRef (Set ResolvedModuleRef, ModuleHash),
   }
 
 type Build m = (MonadBaseControl IO m, MonadReader (BuildVars m) m,
@@ -160,11 +167,33 @@ parseModuleImports path source = getModuleImports <$> parseModule path source
 
 -- | Resolve a module reference. Success means the module has a valid
 -- and unambiguous name, and hence a known path.
+--
+-- A valid module reference is one of the following:
+--
+-- * A qualified name referring to a dependent package and a module
+--   found in that package.
+-- * The unqualified name of a module which is in the same package as where
+--   the reference originated (modules with the same name might exist
+--   in other packages)
+-- * The unqualified name of a module which appears in exactly ONE dependent
+--   package
+--   * This does mean that a package might compile on its own but not
+--     when used as a dependency, if other dependencies provide a
+--     module with the same name. However in practice I imagine this
+--     will be rare, and if precompiled packages become the norm, the
+--     metadata can disambiguate.
+--
+-- With the above rules, we can see that we can't cache modulerefs on
+-- their own, because the origin of the reference affects the correct
+-- resolution. But we *can* cache a moduleref PLUS packageref, so
+-- references to the same module coming from the same package don't need to
+-- be repeatedly looked up.
+--
 resolveModuleRef
   :: forall m. Build m => ModuleRef -> m ResolvedModuleRef
 resolveModuleRef mref@(ModuleReference maybePkgName mname) = case maybePkgName of
   Just pname -> do
-    (_ :: FilePath, _ :: Map ModuleName FilePath) <- do
+    _ :: (FilePath, Map ModuleName FilePath) <- do
       getPackageModules (DepPackage pname) >>= wait
     pure $ ResolvedModuleRef (DepPackage pname) mname
   Nothing -> do
@@ -276,20 +305,6 @@ Could normalize these, but not sure of performance tradeoff.
 --         executeMany conn addDepModuleQuery rows
 --         putStrLn $ "Imported " <> show (length pkgModules) <> " modules from " <> show n
 
--- Compilation steps:
---
-type FPLoads m = AsyncLoads m ResolvedModuleRef FilePath
-type ModLoads m = AsyncLoads m ResolvedModuleRef (Set ResolvedModuleRef, ModuleHash)
-type ExtLoads m = AsyncLoads m ResolvedModuleRef (ExternsFile, FilePath)
-
-step1 :: Build m => ModuleRef -> m (ResolvedModuleRef, FPLoads m)
-step1 = undefined
-
-step2 :: Build m => ResolvedModuleRef -> FPLoads m -> m (ModLoads m)
-step2 = undefined
-
-step3 :: Build m => ResolvedModuleRef -> ModLoads m -> m (ExtLoads m)
-step3 = undefined
 --
 -- * Start with some module ref and a config (captured via monadic
 -- * context). Note we don't yet know if the module ref (or indeed
@@ -325,7 +340,7 @@ step3 = undefined
 -- | Asynchronously load the names of all of the modules in a package.
 -- If this successfully completes, it means:
 -- The database has a record of this package
--- The database has records of all names of all modules in the package
+-- The databases has records of all names of all modules in the package
 getPackageModules
   :: forall m. Build m
   => PackageRef
@@ -357,57 +372,6 @@ getPackageRecord
 getPackageRecord = loadAsync bvPackageRecords $ \pref -> do
   modules <- getPackageModules pref
   undefined :: m PackageRecord
-  -- forM modules $ \modName -> do
-  --   let rmref = DepModule pref
-
-      -- forM  $ \
-      --   modules ->
-      --   [] -> throwSimpleError $ PackageNotFound pname
-      --   records@((_, phash, _, _, _, _, _):_) -> do
-      --     modules <- flip execStateT mempty $ do
-      --       forM_ records $ \(pname, phash, mname, mpath, mhash, depPkg, depMod) ->
-      --         undefined
-      --     pure (PackageRecord phash modules)
-
-
--- | Given a possibly invalid or ambiguous reference to a module,
--- track down the module info for that module, or fail.
--- resolveModuleRef :: Build m => ModuleRef -> m (ResolvedModuleRef, PackageRecord)
--- resolveModuleRef (ModuleReference maybePkg modName) = case maybePkg of
---   Just pname -> withConn (query getPackageIdQ (Only pname)) >>= \case
---     -- If we have a package ID, it means that the modules of that package have been discovered.
---     [pkgId] -> do
---       -- See if the package is in the database already. If not we need to load it.
---       withConn (query getPackageRecordQ pkgId) >>= \case
---         [] -> throwSimpleError $ ModuleNotFoundInPackage pname modName
---         records@((_, phash, _, _, _, _, _):_) -> do
---           modules <- flip execStateT mempty $ do
---             forM_ records $ \(pname, phash, mname, mpath, mhash, depPkg, depMod) ->
---               undefined
---           pure (DepModule pname modName, PackageRecord phash modules)
---     _ -> do
---       -- Otherwise, go find it.
---       locations <- bcPackageLocations . bvConfig <$> ask
---       undefined
-
--- searchForModule :: Build m => ModuleRef -> m (AsyncLoad m (ResolvedModuleRef, FilePath))
--- searchForModule = loadAsync bvModuleRefs $ \mref -> do
---   -- Find all of the modules which this could refer to
---   path <- getSourcePath rmref
---   pure (rmref, path)
-
---   Nothing -> do
---     -- See if there are any existing modules with this name.
---     undefined -- do
---     -- (pNames, roots)  <- (,) <$> asks bvPackageNames <*> asks bvLocalModuleRoots
---     -- -- In this case the reference could be from either a package or local.
---     -- -- Refresh package list.
---     -- forM_ pNames $ do
---     --   discovered <- discoverPackage pName
-
---     -- --
---     -- asks bvLocalModuleRoots >>= discoverLocalModules >>= \case
---     --   _ -> error "not sure"
 
 -- | Build a list of modules in parallel.
 buildModules :: Build m => [ModuleRef] -> m [(ExternsFile, ModuleHash)]
@@ -446,21 +410,32 @@ buildResolvedModule = loadAsync bvExternCompiles $ \rmref -> do
           externs' <- parseModule path source >>= compileModule (map fst deps)
           (externs', hash) <$ cacheBuildInDatabase rmref (CachedBuild externs hash)
 
--- | Could do this in two steps: the first one finds the packages that
--- need to be built, and the second compiles the modules to
--- javascript. So the first one would be akin to nix-instantiate, while
--- the second to nix-build.
---
--- purescript "externs" are like nix "store paths"
---   * They are the thing you want to produce (along with corresponding codegen)
---   * They are used as inputs into builds
---   * Their existence means that they don't need to be rebuilt
---
--- purescript "modules" are like nix "expressions"
---   * They haven't been built yet, might not be correct
---   * They can be compiled into _ which are like derivations
---
--- purescript _ are like nix "derivations"
---   * They can contain all information needed to execute build steps
---
--- Issue seems to be that purescript doesn't have a clear analogue of derivations.
+
+cfg :: BuildConfig
+cfg = BuildConfig {
+  bcDependentPackages = [PackageName "purescript-prelude"],
+  bcPackageLocations = ["thetest/js/bower_components"],
+  bcLocalSourceDirectory = "thetest/input",
+  bcOutput = "thetest/output2"
+  }
+
+
+-- Create the build directory and the initial manifest DB.
+initBuild :: MonadBaseControl IO m => BuildConfig -> m (BuildVars m)
+initBuild bvConfig@(BuildConfig {..}) = liftBase $ do
+  D.createDirectoryIfMissing True bcOutput
+  conn <- SQLite.open (bcOutput </> "manifest.db")
+  -- Create tables
+  let execute_ (Query q) = SQLite.execute_ conn q
+  mapM execute_ [createPackageTableQ, createModuleMetaTableQ,
+                 createModuleDependsTableQ,
+                 createPackageModuleMetaTableQ,
+                 createPackageRecordViewQ, createModulePathHashViewQ]
+
+  -- Create mvars
+  bvConn <- newMVar conn
+  bvPackageModules <- newMVar mempty
+  bvPackageRecords <- newMVar mempty
+  bvExternCompiles <- newMVar mempty
+
+  pure BuildVars {..}
