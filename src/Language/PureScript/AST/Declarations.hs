@@ -65,7 +65,10 @@ onTypeSearchTypesM f (TSAfter i r) = TSAfter <$> traverse (traverse f) i <*> tra
 onTypeSearchTypesM _ (TSBefore env) = pure (TSBefore env)
 
 -- | A reference to a module, possibly with a package name for disambiguation.
-data ModuleRef = ModuleReference (Maybe PackageName) ModuleName deriving (Show, Eq, Ord)
+data ModuleRef = ModuleReference {
+  mrPackage :: Maybe PackageName,
+  mrName :: ModuleName
+  } deriving (Show, Eq, Ord)
 
 someModuleNamed :: ModuleName -> ModuleRef
 someModuleNamed = ModuleReference Nothing
@@ -75,7 +78,7 @@ data SimpleErrorMessage
   = PackageNotFound PackageName
   | ModuleNotFound ModuleName -- failed unqualified module reference
   | ModuleNotFoundInPackage PackageName ModuleName -- failed qualified module reference
-  | AmbiguousModule ModuleRef
+  | AmbiguousModule ModuleName -- unqualified module reference matches multiple modules
   | ErrorParsingFFIModule FilePath (Maybe Bundle.ErrorMessage)
   | ErrorParsingModule P.ParseError
   | MissingFFIModule ModuleName
@@ -252,9 +255,10 @@ getModuleSourceSpan (Module ss _ _ _ _) = ss
 getModuleDeclarations :: Module -> [Declaration]
 getModuleDeclarations (Module _ _ _ declarations _) = declarations
 
-getModuleImports :: Module -> [ModuleName]
+-- | Get the imports of a module.
+getModuleImports :: Module -> [ModuleRef]
 getModuleImports modl = mapMaybe getImport $ getModuleDeclarations modl
-  where getImport (ImportDeclaration _ mn _ _) = Just mn
+  where getImport (ImportDeclaration _ mn _ _) = Just (someModuleNamed mn)
         getImport _ = Nothing
 
 -- |

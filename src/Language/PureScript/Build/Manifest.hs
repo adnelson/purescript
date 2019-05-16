@@ -6,6 +6,7 @@ module Language.PureScript.Build.Manifest where
 import Prelude.Compat
 
 import Text.RawString.QQ (r)
+import Data.Time.Clock (UTCTime)
 import Data.String (IsString, fromString)
 import Database.SQLite.Simple hiding (Query)
 import qualified Database.SQLite.Simple as SQLite
@@ -35,7 +36,8 @@ CREATE TABLE module_meta (
   name TEXT NOT NULL,
   -- Path is null if there's no source code available
   path TEXT UNIQUE,
-  hash BLOB NOT NULL UNIQUE
+  hash BLOB NOT NULL, -- MD5 hash of file contents
+  timestamp TEXT NOT NULL -- timestamp at time of hash
 );
 |]
 
@@ -117,8 +119,8 @@ SELECT path FROM module_full_meta
 WHERE package_name = ? AND module_name = ?
 |]
 
-insertModuleQ :: Query (ModuleName, FilePath) ()
-insertModuleQ = "INSERT INTO module_meta (name, path) VALUES (?, ?)"
+insertModuleQ :: Query (ModuleName, FilePath, ModuleHash, UTCTime) ()
+insertModuleQ = "INSERT INTO module_meta (name, path) VALUES (?, ?, ?, ?)"
 
 insertModuleDependsQ :: Query (ModuleName, ModuleName) ()
 insertModuleDependsQ = fromString [r|
@@ -128,10 +130,19 @@ INSERT INTO module_depends (module_meta, depends) VALUES (
 )
 |]
 
+type ModuleDependsListId = Int
+-- Get the ID of a module dependency list
+getModuleDependsListQ :: Query ResolvedModuleRef ModuleDependsListId
+getModuleDependsListQ = "TODO"
+
+-- Get dependencies of a module. Pairs them with hashes
+getModuleDependsQ :: Query ModuleDependsListId (ResolvedModuleRef, ModuleHash)
+getModuleDependsQ = "TODO"
+
 insertPackageQ :: Query (PackageRef, FilePath) ()
 insertPackageQ = "INSERT INTO package (name, path) VALUES (?, ?)"
 
-getPackageModulesQ :: Query (Only PackageId) (ModuleName, FilePath)
+getPackageModulesQ :: Query (Only PackageId) (ModuleName, FilePath, ModuleHash, UTCTime)
 getPackageModulesQ = "TODO"
 
 getPackageRootQ :: Query (Only PackageId) (Only FilePath)
