@@ -90,7 +90,7 @@ resolveExports env ss mn imps exps refs =
   -- `DeclarationRef` for an explicit export. When the ref refers to another
   -- module, export anything from the imports that matches for that module.
   elaborateModuleExports :: Exports -> DeclarationRef -> m Exports
-  elaborateModuleExports result (ModuleRef _ name) | name == mn = do
+  elaborateModuleExports result (ModuleReference _ (ModuleRef _ name)) | name == mn = do
     let types' = exportedTypes result `M.union` exportedTypes exps
     let typeOps' = exportedTypeOps result `M.union` exportedTypeOps exps
     let classes' = exportedTypeClasses result `M.union` exportedTypeClasses exps
@@ -105,7 +105,7 @@ resolveExports env ss mn imps exps refs =
       , exportedValueOps = valueOps'
       , exportedKinds = kinds'
       }
-  elaborateModuleExports result (ModuleRef ss' name) = do
+  elaborateModuleExports result (ModuleReference ss' (ModuleRef _ name)) = do
     let isPseudo = isPseudoModule name
     when (not isPseudo && not (isImportedModule name))
       . throwError . errorMessage' ss' . UnknownExport $ ModName name

@@ -66,7 +66,7 @@ lintImports (Module _ _ mn mdecls (Just mexports)) env usedImps = do
       usedImps' = foldr (elaborateUsed scope) usedImps exportedModules
       numOpenImports = getSum $ foldMap (Sum . countOpenImports) mdecls
       allowImplicit = numOpenImports == 1
-      imports = M.toAscList (findImports mdecls)
+      imports = (\(mr, d) -> (mrName mr, d)) <$> M.toAscList (findImports mdecls)
 
   for_ imports $ \(mni, decls) ->
     unless (C.isPrim mni) .
@@ -109,7 +109,7 @@ lintImports (Module _ _ mn mdecls (Just mexports)) env usedImps = do
   -- Check re-exported modules to see if we are re-exporting a qualified module
   -- that has unspecified imports.
   for_ mexports $ \case
-    ModuleRef _ mnq ->
+    ModuleReference _ (ModuleRef _ mnq) ->
       case M.lookup mnq (byQual imports) of
         -- We only match the single-entry case here as otherwise there will be
         -- a different warning about implicit imports potentially colliding
@@ -133,9 +133,9 @@ lintImports (Module _ _ mn mdecls (Just mexports)) env usedImps = do
   selfCartesianSubset [] = []
 
   countOpenImports :: Declaration -> Int
-  countOpenImports (ImportDeclaration _ mn' Implicit Nothing)
+  countOpenImports (ImportDeclaration _ (ModuleRef _ mn') Implicit Nothing)
     | not (C.isPrim mn' || mn == mn') = 1
-  countOpenImports (ImportDeclaration _ mn' (Hiding _) Nothing)
+  countOpenImports (ImportDeclaration _ (ModuleRef _ mn') (Hiding _) Nothing)
     | not (C.isPrim mn' || mn == mn') = 1
   countOpenImports _ = 0
 
@@ -158,7 +158,7 @@ lintImports (Module _ _ mn mdecls (Just mexports)) env usedImps = do
   exportedModules :: [ModuleName]
   exportedModules = ordNub $ mapMaybe extractModule mexports
     where
-    extractModule (ModuleRef _ mne) = Just mne
+    extractModule (ModuleReference _ (ModuleRef _ mne)) = Just mne
     extractModule _ = Nothing
 
   -- Elaborates the UsedImports to include values from modules that are being

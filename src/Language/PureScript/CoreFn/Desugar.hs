@@ -188,7 +188,7 @@ moduleToCoreFn env (A.Module modSS coms mn decls (Just exps)) =
     typeConstructor (Qualified (Just mn') _, (_, tyCtor, _, _)) = (mn', tyCtor)
     typeConstructor _ = internalError "Invalid argument to typeConstructor"
 
--- | Find module names from qualified references to values. This is used to
+-- | Find module references from qualified references to values. This is used to
 -- ensure instances are imported from any module that is referenced by the
 -- current module, not just from those that are imported explicitly (#667).
 findQualModules :: [A.Declaration] -> [ModuleName]
@@ -219,8 +219,11 @@ findQualModules decls =
   getQual' = maybe [] return . getQual
 
 -- | Desugars import declarations from AST to CoreFn representation.
+-- Note that we throw away package names here, because we're constructing the set of
+-- module names that are known to be in scope for this module (i.e. those that are
+-- or can be used as qualifiers in a variable name).
 importToCoreFn :: A.Declaration -> Maybe (Ann, ModuleName)
-importToCoreFn (A.ImportDeclaration (ss, com) name _ _) = Just ((ss, com, Nothing, Nothing), name)
+importToCoreFn (A.ImportDeclaration (ss, com) (ModuleRef _ mn) _ _) = Just ((ss, com, Nothing, Nothing), mn)
 importToCoreFn _ = Nothing
 
 -- | Desugars foreign declarations from AST to CoreFn representation.

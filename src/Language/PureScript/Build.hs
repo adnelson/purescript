@@ -8,7 +8,7 @@
 module Language.PureScript.Build where
 
 import Prelude.Compat
-import Protolude (forM, forM_)
+import Protolude (forM, forM_, ordNub)
 import System.FilePath ((</>))
 
 import Control.Concurrent.MVar.Lifted
@@ -27,7 +27,7 @@ import Data.List (foldl')
 import Data.Set (Set)
 import qualified Data.Set as S
 import Data.Map (Map)
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, mapMaybe)
 import qualified Data.Map as M
 import Control.Arrow ((***))
 import qualified Data.Text.Encoding as T
@@ -138,6 +138,10 @@ compileModule :: Build m => [ExternsFile] -> Module -> m ExternsFile
 compileModule externs modl = do
   let ffiCodegen = error "ffiCodegen not defined"
   let env = foldl' (flip applyExternsFileToEnvironment) initEnvironment externs
+      -- This adds `import Prim` and `import qualified Prim` to the
+      -- module. Is this really necessary? It seems redundant and
+      -- inefficient. Instead, these modules could just be treated
+      -- specially when resolving them.
       withPrim = importPrim modl
   lint withPrim
   ((Module ss coms _ elaborated exps, env'), nextVar) <- runSupplyT 0 $ do
@@ -202,7 +206,7 @@ parseModuleImports path source = getModuleImports <$> parseModule path source
 resolveModuleRef
   :: forall m. Build m
   => (PackageRef, ModuleRef) -> m (AsyncLoad m ResolvedModuleRef)
-resolveModuleRef = loadAsync bvResolvedMods $ \(pref, ModuleReference mPkg name) -> case mPkg of
+resolveModuleRef = loadAsync bvResolvedMods $ \(pref, ModuleRef mPkg name) -> case mPkg of
   Just pname -> do
     -- We don't need to use the information here; just make sure that it loaded successfully
     PackageMeta _ mods <- getPackageMeta (DepPackage pname) >>= wait
@@ -227,11 +231,11 @@ resolveModuleRef = loadAsync bvResolvedMods $ \(pref, ModuleReference mPkg name)
         case catMaybes fromOtherPackages of
           [result] -> pure result
           [] -> throwSimpleError $ ModuleNotFound name
-          _ -> throwSimpleError $ AmbiguousModule name
-
-
--- getPackageMeta :: Build m => PackageRef -> m PackageMeta
--- getPackageMeta pref = getPackageMeta pref >>= wait
+          refs -> do
+            let pkgNames = flip mapMaybe refs $ \(ResolvedModuleRef _ p _) -> case p of
+                  LocalPackage -> Nothing
+                  DepPackage p -> Just p
+            throwSimpleError $ AmbiguousModule name (ordNub pkgNames)
 
 -- | Get the path to a module which is known to exist.
 getSourcePath :: Build m => ResolvedModuleRef -> m FilePath
@@ -466,10 +470,12 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
           rmrefs <- case depRefs of
             Left unresolved -> undefined
             Right rmrefs -> pure rmrefs
+
           -- Recur on these dependencies
           depRecords :: [ModuleRecord] <- do
             asyncs <- forM rmrefs $ getModuleRecord (pushTrace r trace)
             mapM wait asyncs
+
           -- Compute the hash off of dependencies
           let hash'@(TimedHash stamp hash) = foldr (<>) latestHash (mrHash <$> depRecords)
           withConn $ \conn -> do
@@ -548,6 +554,7 @@ buildResolvedModule = loadAsync bvExternCompiles $ \rmref -> do
   path <- getSourcePath rmref
   getCachedBuildFromDatabase rmref >>= \case
     Nothing -> do
+      -- No cached build; needs to be built from scratch.
       source <- liftBase $ B8.readFile path
       modl <- parseModule path source
       deps <- buildModules pref $ getModuleImports modl
@@ -557,7 +564,7 @@ buildResolvedModule = loadAsync bvExternCompiles $ \rmref -> do
 
     Just (CachedBuild externs storedHash) -> do
       -- Build dependencies first.
-      deps <- buildModules pref $ someModuleNamed <$> efImportedModuleNames externs
+      deps <- buildModules pref $ efImportedModuleRefs externs
       -- Hash the contents of the source file + dependency hashes to
       -- get the unique signature of the module we're building.
       source <- liftBase $ B8.readFile path

@@ -77,7 +77,10 @@ stripModuleAndSpan (ErrorMessage hints e) = ErrorMessage (filter (not . shouldSt
 -- | Get the error code for a particular error type
 errorCode :: ErrorMessage -> Text
 errorCode em = case unwrapErrorMessage em of
+  PackageNotFound{} -> "PackageNotFound"
   ModuleNotFound{} -> "ModuleNotFound"
+  ModuleNotFoundInPackage{} -> "ModuleNotFoundInPackage"
+  AmbiguousModule{} -> "AmbiguousModule"
   ErrorParsingFFIModule{} -> "ErrorParsingFFIModule"
   ErrorParsingModule{} -> "ErrorParsingModule"
   MissingFFIModule{} -> "MissingFFIModule"
@@ -457,8 +460,20 @@ prettyPrintSingleError (PPEOptions codeColor full level showDocs relPath) e = fl
       unknownInfo u = line $ markCode ("t" <> T.pack (show u)) <> " is an unknown type"
 
     renderSimpleErrorMessage :: SimpleErrorMessage -> Box.Box
+    renderSimpleErrorMessage (PackageNotFound p) =
+      paras [ line $ "Package " <> markCode (packageNameToText p) <> " was not found."
+            , line "Make sure the package been provided as an input to the compiler."
+            ]
     renderSimpleErrorMessage (ModuleNotFound mn) =
       paras [ line $ "Module " <> markCode (runModuleName mn) <> " was not found."
+            , line "Make sure the source file exists, and that it has been provided as an input to the compiler."
+            ]
+    renderSimpleErrorMessage (AmbiguousModule mn pkgs) =
+      paras [ line $ "Module " <> markCode (runModuleName mn) <> " is ambiguous."
+            , line $ "It is found in these packages: " <> T.intercalate ", " (map packageNameToText pkgs)
+            ]
+    renderSimpleErrorMessage (ModuleNotFoundInPackage p mn) =
+      paras [ line $ "Module " <> markCode (runModuleName mn) <> " was not found in package " <> packageNameToText p
             , line "Make sure the source file exists, and that it has been provided as an input to the compiler."
             ]
     renderSimpleErrorMessage (CannotFindSourceRoot path) =
@@ -572,7 +587,7 @@ prettyPrintSingleError (PPEOptions codeColor full level showDocs relPath) e = fl
       line $ "The value of " <> markCode (showIdent nm) <> " is undefined here, so this reference is not allowed."
     renderSimpleErrorMessage (CycleInModules mns) =
       case mns of
-        [ModuleReference _ mn] -> -- TODO report package if specified
+        [ModuleRef _ mn] -> -- TODO report package if specified
           line $ "Module " <> markCode (runModuleName mn) <> " imports itself."
         _ ->
           paras [ line "There is a cycle in module dependencies in these modules: "
@@ -858,7 +873,7 @@ prettyPrintSingleError (PPEOptions codeColor full level showDocs relPath) e = fl
       line $ "Type variable " <> markCode tv <> " is ambiguous, since it is unused in the polymorphic type which introduces it."
     renderSimpleErrorMessage (MisleadingEmptyTypeImport mn name) =
       line $ "Importing type " <> markCode (runProperName name <> "(..)") <> " from " <> markCode (runModuleName mn) <> " is misleading as it has no exported data constructors."
-    renderSimpleErrorMessage (ImportHidingModule name) =
+    renderSimpleErrorMessage (ImportHidingModule (ModuleRef _ name)) =
       paras [ line "hiding imports cannot be used to hide modules."
             , line $ "An attempt was made to hide the import of " <> markCode (runModuleName name)
             ]
@@ -1327,8 +1342,10 @@ prettyPrintRef (TypeClassRef _ pn) =
   Just $ "class " <> runProperName pn
 prettyPrintRef (TypeInstanceRef _ ident) =
   Just $ showIdent ident
-prettyPrintRef (ModuleRef _ name) =
+prettyPrintRef (ModuleReference _ (ModuleRef Nothing name)) =
   Just $ "module " <> runModuleName name
+prettyPrintRef (ModuleReference _ (ModuleRef (Just p) name)) =
+  Just $ "module " <> runModuleName name <> " from package " <> packageNameToText p
 prettyPrintRef (KindRef _ pn) =
   Just $ "kind " <> runProperName pn
 prettyPrintRef ReExportRef{} =

@@ -64,21 +64,12 @@ onTypeSearchTypesM :: (Applicative m) => (SourceType -> m SourceType) -> TypeSea
 onTypeSearchTypesM f (TSAfter i r) = TSAfter <$> traverse (traverse f) i <*> traverse (traverse (traverse f)) r
 onTypeSearchTypesM _ (TSBefore env) = pure (TSBefore env)
 
--- | A reference to a module, possibly with a package name for disambiguation.
-data ModuleRef = ModuleReference {
-  mrPackage :: Maybe PackageName,
-  mrName :: ModuleName
-  } deriving (Show, Eq, Ord)
-
-someModuleNamed :: ModuleName -> ModuleRef
-someModuleNamed = ModuleReference Nothing
-
 -- | A type of error messages
 data SimpleErrorMessage
   = PackageNotFound PackageName
   | ModuleNotFound ModuleName -- failed unqualified module reference
   | ModuleNotFoundInPackage PackageName ModuleName -- failed qualified module reference
-  | AmbiguousModule ModuleName -- unqualified module reference matches multiple modules
+  | AmbiguousModule ModuleName [PackageName] -- unqualified module reference matches multiple modules
   | ErrorParsingFFIModule FilePath (Maybe Bundle.ErrorMessage)
   | ErrorParsingModule P.ParseError
   | MissingFFIModule ModuleName
@@ -162,7 +153,7 @@ data SimpleErrorMessage
   | OverlappingPattern [[Binder]] Bool
   | IncompleteExhaustivityCheck
   | MisleadingEmptyTypeImport ModuleName (ProperName 'TypeName)
-  | ImportHidingModule ModuleName
+  | ImportHidingModule ModuleRef
   | UnusedImport ModuleName
   | UnusedExplicitImport ModuleName [Name] (Maybe ModuleName) [DeclarationRef]
   | UnusedDctorImport ModuleName (ProperName 'TypeName) (Maybe ModuleName) [DeclarationRef]
@@ -240,25 +231,18 @@ data ErrorMessage = ErrorMessage
 -- a list of declarations, and a list of the declarations that are
 -- explicitly exported. If the export list is Nothing, everything is exported.
 --
-data Module = Module SourceSpan [Comment] ModuleName [Declaration] (Maybe [DeclarationRef])
-  deriving (Show)
-
--- | Return a module's name.
-getModuleName :: Module -> ModuleName
-getModuleName (Module _ _ name _ _) = name
-
--- | Return a module's source span.
-getModuleSourceSpan :: Module -> SourceSpan
-getModuleSourceSpan (Module ss _ _ _ _) = ss
-
--- | Return a module's declarations.
-getModuleDeclarations :: Module -> [Declaration]
-getModuleDeclarations (Module _ _ _ declarations _) = declarations
+data Module = Module {
+  getModuleSourceSpan :: SourceSpan,
+  getModuleComments :: [Comment],
+  getModuleName :: ModuleName,
+  getModuleDeclarations :: [Declaration],
+  getModuleExports :: Maybe [DeclarationRef]
+  } deriving (Show)
 
 -- | Get the imports of a module.
 getModuleImports :: Module -> [ModuleRef]
 getModuleImports modl = mapMaybe getImport $ getModuleDeclarations modl
-  where getImport (ImportDeclaration _ mn _ _) = Just (someModuleNamed mn)
+  where getImport (ImportDeclaration _ mref _ _) = Just mref
         getImport _ = Nothing
 
 -- |
@@ -267,12 +251,14 @@ getModuleImports modl = mapMaybe getImport $ getModuleDeclarations modl
 -- Will not import an unqualified module if that module has already been imported qualified.
 -- (See #2197)
 --
+-- TODO this is only used by `importPrim` which might not be a necessary method anyway.
+--
 addDefaultImport :: Qualified ModuleName -> Module -> Module
 addDefaultImport (Qualified toImportAs toImport) m@(Module ss coms mn decls exps) =
   if isExistingImport `any` decls || mn == toImport then m
-  else Module ss coms mn (ImportDeclaration (ss, []) toImport Implicit toImportAs : decls) exps
+  else Module ss coms mn (ImportDeclaration (ss, []) (someModuleNamed toImport) Implicit toImportAs : decls) exps
   where
-  isExistingImport (ImportDeclaration _ mn' _ as')
+  isExistingImport (ImportDeclaration _ (ModuleRef _ mn') _ as')
     | mn' == toImport =
         case toImportAs of
           Nothing -> True
@@ -320,7 +306,7 @@ data DeclarationRef
   -- |
   -- A module, in its entirety
   --
-  | ModuleRef SourceSpan ModuleName
+  | ModuleReference SourceSpan ModuleRef
   -- |
   -- A named kind
   --
@@ -339,7 +325,7 @@ instance Eq DeclarationRef where
   (ValueOpRef _ name) == (ValueOpRef _ name') = name == name'
   (TypeClassRef _ name) == (TypeClassRef _ name') = name == name'
   (TypeInstanceRef _ name) == (TypeInstanceRef _ name') = name == name'
-  (ModuleRef _ name) == (ModuleRef _ name') = name == name'
+  (ModuleReference _ name) == (ModuleReference _ name') = name == name'
   (KindRef _ name) == (KindRef _ name') = name == name'
   (ReExportRef _ mn ref) == (ReExportRef _ mn' ref') = mn == mn' && ref == ref'
   _ == _ = False
@@ -361,7 +347,7 @@ compDecRef (ValueRef _ ident) (ValueRef _ ident') = compare ident ident'
 compDecRef (ValueOpRef _ name) (ValueOpRef _ name') = compare name name'
 compDecRef (TypeClassRef _ name) (TypeClassRef _ name') = compare name name'
 compDecRef (TypeInstanceRef _ ident) (TypeInstanceRef _ ident') = compare ident ident'
-compDecRef (ModuleRef _ name) (ModuleRef _ name') = compare name name'
+compDecRef (ModuleReference _ name) (ModuleReference _ name') = compare name name'
 compDecRef (KindRef _ name) (KindRef _ name') = compare name name'
 compDecRef (ReExportRef _ name _) (ReExportRef _ name' _) = compare name name'
 compDecRef ref ref' = compare
@@ -383,7 +369,7 @@ declRefSourceSpan (ValueRef ss _) = ss
 declRefSourceSpan (ValueOpRef ss _) = ss
 declRefSourceSpan (TypeClassRef ss _) = ss
 declRefSourceSpan (TypeInstanceRef ss _) = ss
-declRefSourceSpan (ModuleRef ss _) = ss
+declRefSourceSpan (ModuleReference ss _) = ss
 declRefSourceSpan (KindRef ss _) = ss
 declRefSourceSpan (ReExportRef ss _ _) = ss
 
@@ -394,7 +380,7 @@ declRefName (ValueRef _ n) = IdentName n
 declRefName (ValueOpRef _ n) = ValOpName n
 declRefName (TypeClassRef _ n) = TyClassName n
 declRefName (TypeInstanceRef _ n) = IdentName n
-declRefName (ModuleRef _ n) = ModName n
+declRefName (ModuleReference _ (ModuleRef _ n)) = ModName n
 declRefName (KindRef _ n) = KiName n
 declRefName (ReExportRef _ _ ref) = declRefName ref
 
@@ -423,7 +409,7 @@ getKindRef (KindRef _ name) = Just name
 getKindRef _ = Nothing
 
 isModuleRef :: DeclarationRef -> Bool
-isModuleRef ModuleRef{} = True
+isModuleRef ModuleReference{} = True
 isModuleRef _ = False
 
 -- |
@@ -547,9 +533,9 @@ data Declaration
   --
   | FixityDeclaration SourceAnn (Either ValueFixity TypeFixity)
   -- |
-  -- A module import (module name, qualified/unqualified/hiding, optional "qualified as" name)
+  -- A module import (module reference, qualified/unqualified/hiding, optional "qualified as" name)
   --
-  | ImportDeclaration SourceAnn ModuleName ImportDeclarationType (Maybe ModuleName)
+  | ImportDeclaration SourceAnn ModuleRef ImportDeclarationType (Maybe ModuleName)
   -- |
   -- A type class declaration (name, argument, implies, member declarations)
   --

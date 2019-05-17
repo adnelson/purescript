@@ -67,7 +67,7 @@ directDependants declaration modules mn = Map.mapMaybe (nonEmpty . go) modules
     go = foldMap isImporting . P.getModuleDeclarations
 
     isImporting d = case d of
-      P.ImportDeclaration _ mn' it qual | mn == mn' -> P.Qualified qual <$> case it of
+      P.ImportDeclaration _ (P.ModuleRef _ mn') it qual | mn == mn' -> P.Qualified qual <$> case it of
         P.Implicit -> pure declaration
         P.Explicit refs
           | any (declaration `matchesRef`) refs -> pure declaration
@@ -113,7 +113,7 @@ matchesRef declaration ref = case declaration of
     P.KindRef _ kindName -> kindName == kind
     _ -> False
   IdeDeclModule m -> case ref of
-    P.ModuleRef _ mn -> m == mn
+    P.ModuleReference _ (P.ModuleRef _ mn) -> m == mn
     _ -> False
 
 eligibleModules

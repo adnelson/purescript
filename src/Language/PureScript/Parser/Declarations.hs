@@ -157,14 +157,15 @@ parseImportDeclaration = withSourceAnnF $ do
   (mn, declType, asQ) <- parseImportDeclaration'
   return $ \sa -> ImportDeclaration sa mn declType asQ
 
-parseImportDeclaration' :: TokenParser (ModuleName, ImportDeclarationType, Maybe ModuleName)
+parseImportDeclaration' :: TokenParser (ModuleRef, ImportDeclarationType, Maybe ModuleName)
 parseImportDeclaration' = do
   reserved "import"
   indented
+  maybePackageName <- P.optionMaybe packageName
   moduleName' <- moduleName
   declType <- reserved "hiding" *> qualifyingList Hiding <|> qualifyingList Explicit
   qName <- P.optionMaybe qualifiedName
-  return (moduleName', declType, qName)
+  return (ModuleRef maybePackageName moduleName', declType, qName)
   where
   qualifiedName = reserved "as" *> moduleName
   qualifyingList expectedType = do
@@ -178,7 +179,7 @@ parseDeclarationRef =
     <|> withSourceSpan' ValueOpRef (parens parseOperator)
     <|> withSourceSpan' (\sa -> ($ TypeRef sa)) parseTypeRef
     <|> withSourceSpan' TypeClassRef (reserved "class" *> properName)
-    <|> withSourceSpan' ModuleRef (indented *> reserved "module" *> moduleName)
+    <|> withSourceSpan' ModuleReference (indented *> reserved "module" *> fmap someModuleNamed moduleName)
     <|> withSourceSpan' TypeOpRef (indented *> reserved "type" *> parens parseOperator)
   where
   parseTypeRef = do

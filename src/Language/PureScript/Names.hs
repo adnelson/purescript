@@ -2,6 +2,8 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DeriveAnyClass #-}
 
 -- |
 -- Data types for names
@@ -174,12 +176,15 @@ instance FromJSONKey ModuleName
 instance ToField ModuleName where toField = toField . runModuleName
 instance FromField ModuleName where fromField f = moduleNameFromString <$> fromField f
 
+-- | Convert a module name to a 'Text'.
 runModuleName :: ModuleName -> Text
 runModuleName (ModuleName pns) = T.intercalate "." (runProperName <$> pns)
 
+-- | Convert a module name to a 'String'.
 renderModuleName :: ModuleName -> String
 renderModuleName = T.unpack . runModuleName
 
+-- | Read a module name from 'Text'.
 moduleNameFromString :: Text -> ModuleName
 moduleNameFromString = ModuleName . splitProperNames
   where
@@ -202,12 +207,8 @@ moduleNameToRelPath (ModuleName names) =
   T.unpack $ T.intercalate "/" (map runProperName names) <> ".purs"
 
 -- | TODO: make a smart constructor for this
-newtype PackageName = PackageName Text deriving (Show, Eq, Ord)
-
-instance ToField PackageName where
-  toField (PackageName name) = toField name
-instance FromField PackageName where
-  fromField f =  PackageName <$> fromField f
+newtype PackageName = PackageName { packageNameToText :: Text }
+  deriving (Show, Eq, Ord, Generic, NFData, ToField, FromField, ToJSON, FromJSON)
 
 -- |
 -- A qualified name, i.e. a name with an optional module name
@@ -272,3 +273,29 @@ isQualifiedWith _ _ = False
 $(deriveJSON (defaultOptions { sumEncoding = ObjectWithSingleField }) ''Qualified)
 $(deriveJSON (defaultOptions { sumEncoding = ObjectWithSingleField }) ''Ident)
 $(deriveJSON (defaultOptions { sumEncoding = ObjectWithSingleField }) ''ModuleName)
+
+-- | A reference to a module, possibly with a package name for disambiguation.
+data ModuleRef = ModuleRef {
+  mrPackage :: Maybe PackageName,
+  mrName :: ModuleName
+  } deriving (Show, Eq, Ord, Generic, NFData)
+
+instance ToJSON ModuleRef where
+  toJSON (ModuleRef Nothing name) = toJSON name
+  toJSON (ModuleRef (Just pkg) name) = object ["package" .= pkg, "name" .= name]
+
+instance FromJSON ModuleRef where
+  parseJSON = \case
+    s@(String _) -> someModuleNamed <$> parseJSON s
+    val -> flip (withObject "qualified module reference") val $ \o -> do
+      ModuleRef <$> (o .: "package") <*> (o .: "name")
+
+someModuleNamed :: ModuleName -> ModuleRef
+someModuleNamed = ModuleRef Nothing
+
+-- | Convert a module reference to text.
+--
+-- This should only be used for user-facing purposes (logging, errors etc).
+moduleRefToText :: ModuleRef -> Text
+moduleRefToText (ModuleRef Nothing name) = runModuleName name
+moduleRefToText (ModuleRef (Just pkg) name) = mconcat [packageNameToText pkg, ".", runModuleName name]

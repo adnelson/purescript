@@ -98,8 +98,8 @@ parseModuleHeader = do
     (P.mark (Parsec.many (P.same *> P.parseImportDeclaration')))
   pure (ImportParse mn ipStart ipEnd (map mkImport decls))
   where
-    mkImport (mn, (P.Explicit refs), qual) = Import mn (P.Explicit refs) qual
-    mkImport (mn, it, qual) = Import mn it qual
+    mkImport (P.ModuleRef _ mn, (P.Explicit refs), qual) = Import mn (P.Explicit refs) qual
+    mkImport (P.ModuleRef _ mn, it, qual) = Import mn it qual
 
 sliceImportSection :: [Text] -> Either Text (P.ModuleName, [Text], [Import], [Text])
 sliceImportSection fileLines = first show $ do
@@ -366,7 +366,7 @@ parseImport :: Text -> Maybe Import
 parseImport t =
   case P.lex "<psc-ide>" t
        >>= P.runTokenParser "<psc-ide>" P.parseImportDeclaration' of
-    Right (mn, P.Explicit refs, mmn) ->
+    Right (P.ModuleRef _ mn, P.Explicit refs, mmn) ->
       Just (Import mn (P.Explicit refs) mmn)
-    Right (mn, idt, mmn) -> Just (Import mn idt mmn)
+    Right (P.ModuleRef _ mn, idt, mmn) -> Just (Import mn idt mmn)
     Left _ -> Nothing

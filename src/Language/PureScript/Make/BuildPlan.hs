@@ -32,7 +32,7 @@ import           Language.PureScript.Crash
 import           Language.PureScript.Errors
 import           Language.PureScript.Externs
 import           Language.PureScript.Make.Actions as Actions
-import           Language.PureScript.Names (ModuleName, renderModuleName)
+import           Language.PureScript.Names (ModuleName, ModuleRef(..), renderModuleName)
 import qualified Paths_purescript as Paths
 
 -- | The BuildPlan tracks information about our build progress, and holds all
@@ -111,7 +111,7 @@ getDependenciesTrans plan moduleName deps = do
     -- Discover an ExternsFile's dependencies, and then return the ExternsFile.
     resolve ef = let modName = efModuleName ef in do
       modify (S.insert modName <$>)
-      mapM_ go (efImportedModuleNames ef)
+      mapM_ go (mrName <$> efImportedModuleRefs ef)
       modify (S.delete modName <$>)
 
     go :: ModuleName -> StateT (M.Map ModuleName ExternsFile, S.Set ModuleName) m ()
@@ -180,7 +180,7 @@ construct MakeActions{..} sorted graph dependencyExterns = do
     resolveDependencies :: ExternsFile -> StateT (M.Map ModuleName (Maybe ExternsFile)) m ()
     resolveDependencies externsFile = do
       traceM $ "resolving dependencies of " <> renderModuleName (efModuleName externsFile)
-      forM_ (efImportedModuleNames externsFile) $ \case
+      forM_ (mrName <$> efImportedModuleRefs externsFile) $ \case
         modName | C.isPrim modName -> pure () -- prim modules are automatically resolved
         modName -> M.lookup modName <$> get >>= \case
           Just (Just _) -> pure () -- already resolved

@@ -197,9 +197,11 @@ handleShowImportedModules print' = do
   print' $ showModules importedModules
   where
   showModules = unlines . sort . map (T.unpack . showModule)
-  showModule (mn, declType, asQ) =
-    "import " <> N.runModuleName mn <> showDeclType declType <>
-    foldMap (\mn' -> " as " <> N.runModuleName mn') asQ
+  showModule (N.ModuleRef mPkg mn, declType, asQ) = do
+    let packageQualifier = maybe "" (\(N.PackageName p) -> T.pack (show p) <> " ") mPkg
+        importStr = "import " <> packageQualifier <> N.runModuleName mn
+    importStr <> showDeclType declType <>
+      foldMap (\mn' -> " as " <> N.runModuleName mn') asQ
 
   showDeclType P.Implicit = ""
   showDeclType (P.Explicit refs) = refsList refs
@@ -219,7 +221,7 @@ handleShowImportedModules print' = do
     Just $ "class " <> N.runProperName pn
   showRef (P.TypeInstanceRef _ ident) =
     Just $ N.runIdent ident
-  showRef (P.ModuleRef _ name) =
+  showRef (P.ModuleReference _ (P.ModuleRef _ name)) =
     Just $ "module " <> N.runModuleName name
   showRef (P.KindRef _ pn) =
     Just $ "kind " <> N.runProperName pn
@@ -324,8 +326,9 @@ handleBrowse print' moduleName = do
            else Nothing
 
     failNotInEnv modName = print' $ T.unpack $ "Module '" <> N.runModuleName modName <> "' is not valid."
+    getModName (N.ModuleRef _ n, _, _) = n
     lookupUnQualifiedModName needle imports =
-        (\(modName,_,_) -> modName) <$> find (\(_,_,mayQuaName) -> mayQuaName == Just needle) imports
+        getModName <$> find (\(_,_,mayQuaName) -> mayQuaName == Just needle) imports
 
 -- | Return output as would be returned by tab completion, for tools integration etc.
 handleComplete

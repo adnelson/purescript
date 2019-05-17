@@ -62,7 +62,7 @@ sortModules getExternalModule ms = do
 usedModules :: Declaration -> Maybe (ModuleName, SourceSpan)
 -- Regardless of whether an imported module is qualified we still need to
 -- take into account its import to build an accurate list of dependencies.
-usedModules (ImportDeclaration (ss, _) mn _ _) = pure (mn, ss)
+usedModules (ImportDeclaration (ss, _) (ModuleRef _ name) _ _) = pure (name, ss)
 usedModules _ = Nothing
 
 -- | Convert a strongly connected component of the module graph to a module

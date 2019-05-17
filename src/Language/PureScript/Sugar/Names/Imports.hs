@@ -29,12 +29,12 @@ type ImportDef = (SourceSpan, ImportDeclarationType, Maybe ModuleName)
 --
 findImports
   :: [Declaration]
-  -> M.Map ModuleName [ImportDef]
+  -> M.Map ModuleRef [ImportDef]
 findImports = foldr go M.empty
   where
-  go (ImportDeclaration (pos, _) mn typ qual) result =
+  go (ImportDeclaration (pos, _) mref typ qual) result =
     let imp = (pos, typ, qual)
-    in M.insert mn (maybe [imp] (imp :) (mn `M.lookup` result)) result
+    in M.insert mref (maybe [imp] (imp :) (mref `M.lookup` result)) result
   go _ result = result
 
 -- |
@@ -46,23 +46,25 @@ resolveImports
   => Env
   -> Module
   -> m (Module, Imports)
-resolveImports env (Module ss coms currentModule decls exps) =
+resolveImports env modl@(Module ss coms currentModule decls exps) =
   rethrow (addHint (ErrorInModule currentModule)) $ do
     let imports = findImports decls
         imports' = M.map (map (\(ss', dt, mmn) -> (ss', Just dt, mmn))) imports
-        scope = M.insert currentModule [(internalModuleSourceSpan "<module>", Nothing, Nothing)] imports'
-    (Module ss coms currentModule decls exps,) <$>
-      foldM (resolveModuleImport env) nullImports (M.toList scope)
+        internalMRef = ModuleRef Nothing currentModule
+        internalSpan = internalModuleSourceSpan "<module>"
+        scope = M.insert internalMRef [(internalSpan, Nothing, Nothing)] imports'
+    (modl,) <$> foldM (resolveModuleImport env) nullImports (M.toList scope)
 
 -- | Constructs a set of imports for a single module import.
+-- NOTE: ignoring package names for now
 resolveModuleImport
   :: forall m
    . MonadError MultipleErrors m
   => Env
   -> Imports
-  -> (ModuleName, [(SourceSpan, Maybe ImportDeclarationType, Maybe ModuleName)])
+  -> (ModuleRef, [(SourceSpan, Maybe ImportDeclarationType, Maybe ModuleName)])
   -> m Imports
-resolveModuleImport env ie (mn, imps) = foldM go ie imps
+resolveModuleImport env ie (ModuleRef _ mn, imps) = foldM go ie imps
   where
   go :: Imports
      -> (SourceSpan, Maybe ImportDeclarationType, Maybe ModuleName)
@@ -70,7 +72,7 @@ resolveModuleImport env ie (mn, imps) = foldM go ie imps
   go ie' (ss, typ, impQual) = do
     modExports <-
       maybe
-        (throwError . errorMessage' ss . UnknownName . Qualified Nothing $ ModName mn)
+        (throwError . errorMessage' ss $ ModuleNotFound mn)
         (return . envModuleExports)
         (mn `M.lookup` env)
     let impModules = importedModules ie'
@@ -122,8 +124,8 @@ resolveImport importModule exps imps impQual = resolveByType
       checkImportExists ss TyOpName (exportedTypeOps exps) name
     check (TypeClassRef ss name) =
       checkImportExists ss TyClassName (exportedTypeClasses exps) name
-    check (ModuleRef ss name) | isHiding =
-      throwError . errorMessage' ss $ ImportHidingModule name
+    check (ModuleReference ss mref) | isHiding =
+      throwError . errorMessage' ss $ ImportHidingModule mref
     check (KindRef ss name) =
       checkImportExists ss KiName (exportedKinds exps) name
     check r = internalError $ "Invalid argument to checkRefs: " ++ show r
@@ -204,7 +206,7 @@ resolveImport importModule exps imps impQual = resolveByType
     let kinds' = updateImports (importedKinds imp) (exportedKinds exps) id name ss prov
     return $ imp { importedKinds = kinds' }
   importRef _ _ TypeInstanceRef{} = internalError "TypeInstanceRef in importRef"
-  importRef _ _ ModuleRef{} = internalError "ModuleRef in importRef"
+  importRef _ _ ModuleReference{} = internalError "ModuleRef in importRef"
   importRef _ _ ReExportRef{} = internalError "ReExportRef in importRef"
 
   -- Find all exported data constructors for a given type

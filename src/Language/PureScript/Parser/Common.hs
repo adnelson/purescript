@@ -13,7 +13,7 @@ import           Language.PureScript.Comments
 import           Language.PureScript.Names
 import           Language.PureScript.Parser.Lexer
 import           Language.PureScript.Parser.State
-import           Language.PureScript.PSString (PSString, mkString)
+import           Language.PureScript.PSString (PSString, mkString, decodeString)
 import qualified Text.Parsec as P
 
 -- | Parse a general proper name.
@@ -31,6 +31,15 @@ kindName = ProperName <$> kiname
 -- | Parse a proper name for a data constructor.
 dataConstructorName :: TokenParser (ProperName 'ConstructorName)
 dataConstructorName = ProperName <$> dconsname
+
+-- | Parse a package name
+-- For now just using string literals to avoid lexer ambiguity.
+packageName :: TokenParser PackageName
+packageName = do
+  psstring <- stringLiteral
+  case decodeString psstring of
+    Nothing -> fail $ "Couldn't decode package name " <> show psstring
+    Just s -> pure $ PackageName s
 
 -- | Parse a module name
 moduleName :: TokenParser ModuleName

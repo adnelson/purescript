@@ -99,17 +99,20 @@ psciEnvironment st = foldl' (flip P.applyExternsFileToEnvironment) P.initEnviron
 -- | All of the data that is contained by an ImportDeclaration in the AST.
 -- That is:
 --
--- * A module name, the name of the module which is being imported
+-- * A module reference, i.e. the module which is being imported
 -- * An ImportDeclarationType which specifies whether there is an explicit
 --   import list, a hiding list, or neither.
 -- * If the module is imported qualified, its qualified name in the importing
 --   module. Otherwise, Nothing.
 --
-type ImportedModule = (P.ModuleName, P.ImportDeclarationType, Maybe P.ModuleName)
+type ImportedModule = (P.ModuleRef, P.ImportDeclarationType, Maybe P.ModuleName)
 
 psciImportedModuleNames :: PSCiState -> [P.ModuleName]
-psciImportedModuleNames st =
-  map (\(mn, _, _) -> mn) (psciImportedModules st)
+psciImportedModuleNames = map P.mrName . psciImportedModuleRefs
+
+psciImportedModuleRefs :: PSCiState -> [P.ModuleRef]
+psciImportedModuleRefs st =
+  map (\(mref, _, _) -> mref) (psciImportedModules st)
 
 -- * State helpers
 
@@ -136,13 +139,13 @@ updateImportExports st@(PSCiState modules lets externs iprint _ _) =
   temporaryModule :: P.Module
   temporaryModule =
     let
-      prim = (P.ModuleName [P.ProperName "Prim"], P.Implicit, Nothing)
+      prim = (P.someModuleNamed (P.ModuleName [P.ProperName "Prim"]), P.Implicit, Nothing)
       decl = (importDecl `map` (prim : modules)) ++ lets
     in
       P.Module internalSpan [] temporaryName decl Nothing
 
   importDecl :: ImportedModule -> P.Declaration
-  importDecl (mn, declType, asQ) = P.ImportDeclaration (internalSpan, []) mn declType asQ
+  importDecl (mref, declType, asQ) = P.ImportDeclaration (internalSpan, []) mref declType asQ
 
   internalSpan :: P.SourceSpan
   internalSpan = P.internalModuleSourceSpan "<internal>"
