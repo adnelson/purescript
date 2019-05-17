@@ -572,11 +572,11 @@ prettyPrintSingleError (PPEOptions codeColor full level showDocs relPath) e = fl
       line $ "The value of " <> markCode (showIdent nm) <> " is undefined here, so this reference is not allowed."
     renderSimpleErrorMessage (CycleInModules mns) =
       case mns of
-        [mn] ->
+        [ModuleReference _ mn] -> -- TODO report package if specified
           line $ "Module " <> markCode (runModuleName mn) <> " imports itself."
         _ ->
           paras [ line "There is a cycle in module dependencies in these modules: "
-                , indent $ paras (map (line . markCode . runModuleName) mns)
+                , indent $ paras (map (line . markCode . runModuleName . mrName) mns)
                 ]
     renderSimpleErrorMessage (CycleInTypeSynonym name) =
       paras [ line $ case name of

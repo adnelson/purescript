@@ -14,11 +14,13 @@ import Database.SQLite.Simple.ToField
 import qualified Data.ByteString.Char8 as B8
 import Data.Map (Map)
 import Data.Set (Set)
+import qualified Data.Set as S
 import Control.Monad.Trans.Control (MonadBaseControl(..))
 import Control.Monad.Error.Class (MonadError(..))
 import Control.Monad.Writer.Class (MonadWriter(..))
 import Control.Monad.Reader.Class (MonadReader(..), asks)
 import qualified Crypto.Hash.MD5 as MD5
+import qualified System.Directory as D
 
 import Language.PureScript.Names
 import Language.PureScript.Errors
@@ -44,7 +46,7 @@ instance FromField PackageRef where
 
 data CachedBuild = CachedBuild {
   cbExterns :: !ExternsFile,
-  cbHash :: !ModuleHash
+  cbHash :: !(Hash 'Mod)
   } deriving (Show)
 
 -- | Distinct from the normal moduleref type, which can refer to either a
@@ -52,12 +54,13 @@ data CachedBuild = CachedBuild {
 -- name". This one always refers to one or the other category of
 -- module. It will only be instantiated if the module was discovered on disk.
 data ResolvedModuleRef = ResolvedModuleRef {
+  rmrModuleId :: !ModuleId,
   rmrPackageRef :: !PackageRef,
   rmrModuleName :: !ModuleName
   } deriving (Show, Eq, Ord)
 
 instance ToRow ResolvedModuleRef where
-  toRow (ResolvedModuleRef pr mname) = case pr of
+  toRow (ResolvedModuleRef _ pr mname) = case pr of
     LocalPackage -> toRow ("" :: String, mname)
     DepPackage pname -> toRow (pname, mname)
 
@@ -66,64 +69,85 @@ instance ToRow ResolvedModuleRef where
 --     LocalModule mname -> toRow ("" :: String, mname)
 --     DepModule pname mname -> toRow (pname, mname)
 
-type PrecompiledRecord = (ModuleName, ExternsFile, ModuleHash)
+type PrecompiledRecord = (ModuleName, ExternsFile, Hash 'Mod)
 
 data PackageMeta = PackageMeta {
   pmRoot :: FilePath,
-  pmModules :: Map ModuleName (FilePath, ModuleHash, UTCTime)
-  } deriving (Show)
+  pmModules :: Map ModuleName ModuleId
+  } deriving (Show, Eq)
 
--- | Kinds of things that can be hashed
-data HashType
-  = PackageHash
-  | ModuleHash
+data ModuleMeta = ModuleMeta !ModuleId !FilePath !(TimedHash 'Mod)
+  deriving (Show, Eq)
 
-newtype Hash (a :: HashType) = Hash { unHash :: B8.ByteString }
+data HasId
+  = PkgHasId
+  | ModHasId
+  | ModDepListHasId
+
+type PackageId = CanonId 'PkgHasId
+type ModuleId = CanonId 'ModHasId
+type ModuleDepListId = CanonId 'ModDepListHasId
+
+newtype CanonId (a :: HasId) =CanonId {cId :: Int}
+  deriving (Show, Eq, Ord, FromField, ToField)
+
+instance ToRow (CanonId a) where toRow = toRow . Only
+instance FromRow (CanonId a) where fromRow = fromOnly <$> fromRow
+
+-- | Kinds of things that can be hashed/timestamped/etc
+data ObjType = Pkg | Mod
+
+newtype Hash (a :: ObjType) = Hash { unHash :: B8.ByteString }
   deriving (Show, Eq, FromField, ToField)
 
-type PackageHash = Hash 'PackageHash
-type ModuleHash = Hash 'ModuleHash
+type PackageHash = Hash 'Pkg
+type ModuleHash = Hash 'Mod
+type ModuleStamp = Stamp 'Mod
+
+newtype Stamp (a :: ObjType) = Stamp {tStamp :: UTCTime}
+  deriving (Show, Eq, Ord, FromField, ToField)
+
+readStamp :: FilePath -> IO (Stamp a)
+readStamp p = Stamp <$> D.getModificationTime p
+
+data TimedHash a = TimedHash { sHash :: !(Hash a), sStamp :: !(Stamp a) }
+  deriving (Show, Eq)
+instance Semigroup (TimedHash a) where
+  TimedHash h1 s1 <> TimedHash h2 s2 = TimedHash (h1 <> h2) (max s1 s2)
+instance FromRow (TimedHash a) where
+  fromRow = fromRow >>= \(hash, stamp) -> pure (TimedHash hash stamp)
+instance ToRow (TimedHash a) where toRow (TimedHash h s) = toRow (h, s)
 
 -- TODO could be a more efficient/correct way to implement this
 instance Semigroup (Hash a) where
   Hash h1 <> Hash h2 = Hash $ MD5.finalize $ MD5.update (MD5.update MD5.init h1) h2
 
-hashFile :: FilePath -> IO B8.ByteString
-hashFile p = B8.readFile p >>= \contents ->
-  pure $ MD5.finalize $ MD5.update MD5.init contents
+hashFile :: FilePath -> IO (Hash a)
+hashFile p = initHash <$> B8.readFile p
 
-makeHash :: B8.ByteString -> Hash a
-makeHash bs = Hash $ MD5.finalize $ MD5.update MD5.init bs
+initHash :: B8.ByteString -> Hash a
+initHash bs = Hash $ MD5.finalize $ MD5.update MD5.init bs
 
-makeModuleHash :: B8.ByteString -> [ModuleHash] -> ModuleHash
-makeModuleHash source deps = foldr (<>) (makeHash source) deps
+initHashWithDeps :: B8.ByteString -> [Hash a] -> Hash a
+initHashWithDeps source deps = foldr (<>) (initHash source) deps
 
-data ModuleRecord = ModuleRecord ModuleHash (Set ResolvedModuleRef)
-data PackageRecord = PackageRecord PackageHash (Map ModuleName ModuleRecord)
-newtype PackageId = PackageId Int deriving (FromField, ToField)
-newtype ModuleId = ModuleId Int deriving (FromField, ToField)
+data ModuleRecord = ModuleRecord {
+  mrId :: ModuleId,
+  mrHash :: !(TimedHash 'Mod),
+  mrDeps :: Set ResolvedModuleRef
+  }
 
-data Signature a = Sig { sHash :: !(Hash a), sStamp :: !UTCTime }
+data PackageRecord = PackageRecord (TimedHash 'Pkg) (Map ModuleName ModuleRecord)
 
-instance Semigroup (Signature a) where Sig h1 s1 <> Sig h2 s2 = Sig (h1 <> h2) (max s1 s2)
+data ModuleTrace = ModuleTrace {
+  mtUnordered :: Set ResolvedModuleRef,
+  mtOrdered :: [ResolvedModuleRef]
+  }
 
-{-WIP
-newtype Promise m a = Promise { unPromise :: m (Async (StM m a)) }
+pushTrace :: ResolvedModuleRef -> ModuleTrace -> ModuleTrace
+pushTrace rmr (ModuleTrace u o) = ModuleTrace (S.insert rmr u) (rmr:o)
 
-instance Functor m => Functor (Promise m) where
-  fmap f (Promise p) = _what
-
-instance Applicative m => Applicative (Promise m) where
-  pure = Promise . async . return
-  Promise mf <*> Promise mx = Promise $ do
-      f <- mf
-      x <- mx
-      (f', x') <- waitBoth f x
-      async $ return $ f' x'
-
-instance Monad m => Monad (Promise m) where
-   Promise p >>= f = Promise $ p >>= wait >>= unPromise . f
-
-runPromise :: MonadBaseControl IO m => Promise m a -> m a
-runPromise = wait <=< unPromise
--}
+checkCycle :: ResolvedModuleRef -> ModuleTrace -> Maybe [ResolvedModuleRef]
+checkCycle rmr (ModuleTrace u o) = case S.member rmr u of
+  True -> Just o
+  False -> Nothing

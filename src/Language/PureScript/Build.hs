@@ -27,6 +27,7 @@ import Data.List (foldl')
 import Data.Set (Set)
 import qualified Data.Set as S
 import Data.Map (Map)
+import Data.Maybe (catMaybes)
 import qualified Data.Map as M
 import Control.Arrow ((***))
 import qualified Data.Text.Encoding as T
@@ -171,6 +172,9 @@ parseModule path source = do
 parseModuleImports :: Build m => FilePath -> B8.ByteString -> m [ModuleRef]
 parseModuleImports path source = getModuleImports <$> parseModule path source
 
+-- rmrefToId :: Build m => ResolvedModuleRef -> m ModuleId
+-- rmrefToId =
+
 -- | Resolve a module reference. Success means the module has a valid
 -- and unambiguous name, and hence a known path.
 --
@@ -198,29 +202,33 @@ parseModuleImports path source = getModuleImports <$> parseModule path source
 resolveModuleRef
   :: forall m. Build m
   => (PackageRef, ModuleRef) -> m (AsyncLoad m ResolvedModuleRef)
-resolveModuleRef = loadAsync bvResolvedMods $ \(pref, ModuleReference{..}) -> case mrPackage of
+resolveModuleRef = loadAsync bvResolvedMods $ \(pref, ModuleReference mPkg name) -> case mPkg of
   Just pname -> do
     -- We don't need to use the information here; just make sure that it loaded successfully
-    _ :: PackageMeta <- getPackageMeta (DepPackage pname) >>= wait
-    pure $ ResolvedModuleRef (DepPackage pname) mrName
+    PackageMeta _ mods <- getPackageMeta (DepPackage pname) >>= wait
+    case M.lookup name mods of
+      Nothing -> throwSimpleError $ ModuleNotFoundInPackage pname name
+      Just mId -> pure $ ResolvedModuleRef mId (DepPackage pname) name
   Nothing -> do
     -- First, attempt to load the module from the same package.
-    modPaths <- fmap pmModules $ getPackageMeta pref >>= wait
-    case M.lookup mrName modPaths of
-      Just _ -> pure $ ResolvedModuleRef pref mrName
+    pkgModules <- fmap pmModules $ getPackageMeta pref >>= wait
+    case M.lookup name pkgModules of
+      Just mid -> pure $ ResolvedModuleRef mid pref name
       Nothing -> do
         -- It wasn't found in the package. Load other packages, then
         -- check if there's an unambiguous module with that name.
         depNames <- asks (bcDependentPackages . bvConfig)
         let packages = filter (/= pref) $ LocalPackage : map DepPackage depNames
-        -- NOTE: it may or may not be faster to join the individual
-        -- module maps from each getPackageMeta step rather than doing
-        -- a query. Worth experimenting.
-        forConcurrently_ packages $ \p -> void (getPackageMeta p >>= wait :: m PackageMeta)
-        withConn (query getModuleMetaFromNameQ (Only mrName)) >>= \case
-          [(pref', _)] -> pure $ ResolvedModuleRef pref' mrName
-          [] -> throwSimpleError $ ModuleNotFound mrName
-          _ -> throwSimpleError $ AmbiguousModule mrName
+        fromOtherPackages <- forConcurrently packages $ \pref' -> do
+          PackageMeta _ mods <- getPackageMeta pref' >>= wait
+          pure $ do
+            modId <- M.lookup name mods
+            pure $ ResolvedModuleRef modId pref' name
+        case catMaybes fromOtherPackages of
+          [result] -> pure result
+          [] -> throwSimpleError $ ModuleNotFound name
+          _ -> throwSimpleError $ AmbiguousModule name
+
 
 -- getPackageMeta :: Build m => PackageRef -> m PackageMeta
 -- getPackageMeta pref = getPackageMeta pref >>= wait
@@ -228,7 +236,7 @@ resolveModuleRef = loadAsync bvResolvedMods $ \(pref, ModuleReference{..}) -> ca
 -- | Get the path to a module which is known to exist.
 getSourcePath :: Build m => ResolvedModuleRef -> m FilePath
 getSourcePath rmref = do
-  root <- fmap pmRoot $ getPackageMeta (rmrPackageRef rmref) >>= wait
+  PackageMeta root _ <- getPackageMeta (rmrPackageRef rmref) >>= wait
   pure $ root </> moduleNameToRelPath (rmrModuleName rmref)
 
 
@@ -356,31 +364,41 @@ getPackageMeta
   => PackageRef
   -> m (AsyncLoad m PackageMeta)
 getPackageMeta = loadAsync bvPackageModules $ \pref -> do
-  withConn (query getPackageIdQ (Only pref)) >>= \case
-    -- If we have a package ID the modules of that package have been discovered.
-    (pkgId, root):_ -> do
-      modules :: Map ModuleName (FilePath, ModuleHash, UTCTime) <- M.fromList <$> do
-        res <- withConn (query getPackageModulesQ (Only pkgId))
-        pure $ map (\(m, p, h, s) -> (m, (p, h, s))) res
-      pure $ PackageMeta root modules
+  res <- withConn (query getPackageIdQ (Only pref))
+  undefined :: m PackageMeta
 
-    -- If we don't have that package, we have to load it.
-    _ -> do
-      locations <- bcPackageLocations . bvConfig <$> ask
-      discoverPackage pref locations >>= \case
-        Uncompiled (ModulesAndRoot root modNames) -> do
-          mods :: [(ModuleName, FilePath, ModuleHash, UTCTime)] <- pure []
-            -- forM modNames $ \n -> liftBase $ do
-            --   let path = root </> moduleNameToRelPath n
-            --   stamp <- D.getModificationTime path
-            --   hash <- ModuleHash <$> hashFile path
-            --   pure (n, path, stamp, contents
-          -- Load each module in the db
-          withConn $ \conn -> do
-            executeMany insertModuleQ mods conn
-            execute insertPackageQ (pref, root) conn
-          pure $ PackageMeta root (M.fromList $ map (\(mn, p, h, s) -> (mn, (p, h, s))) mods)
-        Precompiled manifestPath -> error "precompiled manifests not yet implemented"
+-- loadPackageMeta :: forall m. Bui
+  -- case res of
+  --   -- If we have a package ID the modules of that package have been discovered.
+  --   (pkgId, root):_ -> do
+  --     modules :: Map ModuleName ModuleMeta <- M.fromList <$> do
+  --       res <- withConn (query getPackageModulesQ pkgId)
+  --       pure $ map (\(m, p, h, s) -> (m, (ModuleMeta p (TimedHash h s)))) res
+  --     pure $ PackageMeta root modules
+
+  --   -- If we don't have that package, we have to load it.
+  --   _ -> do
+  --     s <- ask
+  --     let locations :: [FilePath] = undefined -- <- bcPackageLocations . bvConfig <$> ask
+  --     liftBase (discoverPackage pref locations) >>= \case
+  --       Uncompiled (ModulesAndRoot root modNames) -> do
+  --         -- Load each module in the db. Since this is the first time
+  --         -- reading them, we record the stamp with no comparison.
+  --         timedHashes <- forConcurrently modNames $ \n -> do
+  --           let path = root </> moduleNameToRelPath n
+  --           stamp <- liftBase $ readStamp path
+  --           contents <- liftBase $ hashFile path
+  --           pure $ (n, TimedHash stamp contents)
+
+  --         -- Once modules are loaded, we can put them in the database.
+  --         withConn $ \conn -> do
+  --           execute insertPackageQ (pref, root) conn
+  --           executeMany insertModuleQ $ map (\(n, TimedHash t h) -> (pref, n, t, h)) timedHashes
+
+  --         -- Construct the package record.
+  --         let modules = M.fromList $ flip map timedHashes $ \(mn, th) -> _what
+  --         pure $ PackageMeta root modules
+  --       Precompiled manifestPath -> error "precompiled manifests not yet implemented"
 
     {-
 
@@ -420,29 +438,45 @@ Module | Depend
 -- | Asynchronously load a module record.
 -- Since this will recur on dependencies of a module, it can detect cycles.
 getModuleRecord
-  :: forall m. Build m => ResolvedModuleRef -> m (AsyncLoad m ModuleRecord)
-getModuleRecord = loadAsync bvModuleRecords $ \r@(ResolvedModuleRef {..}) -> do
-  -- Check database
-  let -- qry :: (SQLite.ToRow i, SQLite.FromRow o) => Connection -> i -> m [o]
-      qry = query
-  refsAndHashes :: [(ResolvedModuleRef, ModuleHash)] <- withConn (query getModuleDependsQ r)
-  case refsAndHashes of
-    -- Note: doesn't distinguish between "no dependencies" and "not yet loaded". Need one more query
-    [] -> do
-      let path = root </> moduleNameToRelPath modName
+  :: forall m. Build m => ModuleTrace -> ResolvedModuleRef -> m (AsyncLoad m ModuleRecord)
+getModuleRecord trace = loadAsync bvModuleRecords getRecord where
+  getRecord :: ResolvedModuleRef -> m ModuleRecord
+  getRecord (r@(ResolvedModuleRef mId pref mname)) = case checkCycle r trace of
+    -- Cycle detection. TODO incorporate packages into trace
+    Just trace -> do
+      throwSimpleError $ CycleInModules (map (someModuleNamed . rmrModuleName) trace)
+    Nothing -> do
+      -- Get dependency info
+      -- TODO check database
+      -- Loading for the first time.
+      path <- getSourcePath r
+      stamp <- liftBase $ readStamp path
       source <- liftBase $ B8.readFile path
       unresolvedImports <- parseModuleImports path source
-      resolvedImportAsyncs <- forM unresolvedImports $ \mref -> do
-        -- Note that we're passing in the package ref of the module being loaded.
-        rmref :: ResolvedModuleRef <- resolveModuleRef (rmrPackageRef, mref) >>= wait
-        getModuleRecord rmref
-      resolvedImports :: [ModuleRecord] <- forM resolvedImportAsyncs wait
-      undefined :: m ModuleRecord
+      resolvedImportAsyncs <- forConcurrently unresolvedImports $ \mref -> do
+        -- Note that we're passing in the package ref of *this* module; i.e. the one
+        -- currently being loaded. By adding this info we can unambiguously determine which
+        -- package/module combo is the correct answer for this package.
+        rmref :: ResolvedModuleRef <- do
+          resolveModuleRef (rmrPackageRef r, mref) >>= wait
+        (rmref,) <$> getModuleRecord (pushTrace r trace) rmref
 
-    _ -> do
-      forM refsAndHashes $ \(rmref, moduleHash) -> do
-        _what
+      depInfos :: [(ResolvedModuleRef, ModuleRecord)] <- do
+        forM resolvedImportAsyncs $ \(rmref, a) -> do
+          recd :: ModuleRecord <- wait a
+          pure (rmref, recd)
 
+      let depHashes = map (mrHash . snd) depInfos
+      let thash@(TimedHash hash' stamp') =
+            foldr (<>) (TimedHash (initHash source) stamp) depHashes
+
+      withConn $ \conn -> do
+        -- Create a module dependency list
+        execute insertModuleDependsListQ (mId, hash', stamp') conn
+        let depIds = map (mrId . snd) depInfos
+        executeMany insertModuleDependsQ ((mId,) <$> depIds) conn
+
+      pure $ ModuleRecord mId thash (S.fromList $ map fst depInfos)
 
 -- | Asynchronously load a package record.
 -- This basically adds an additional layer of validation on top of
@@ -470,7 +504,9 @@ buildModules pref = mapM (buildModule pref >=> wait)
 buildModule
   :: forall m. Build m
   => PackageRef -> ModuleRef -> m (AsyncLoad m (ExternsFile, ModuleHash))
-buildModule pref mref = resolveModuleRef (pref, mref) >>= wait >>= buildResolvedModule
+buildModule pref mref = do
+  rmref <- resolveModuleRef (pref, mref) >>= wait
+  buildResolvedModule rmref
 
 -- | Given a resolved module reference, compile it into externs. This result is cached.
 buildResolvedModule
@@ -484,7 +520,7 @@ buildResolvedModule = loadAsync bvExternCompiles $ \rmref -> do
       source <- liftBase $ B8.readFile path
       modl <- parseModule path source
       deps <- buildModules pref $ getModuleImports modl
-      let hash = makeModuleHash source (map snd deps)
+      let hash = initHashWithDeps source (map snd deps)
       externs <- compileModule (map fst deps) modl
       (externs, hash) <$ cacheBuildInDatabase rmref (CachedBuild externs hash)
 
@@ -494,7 +530,7 @@ buildResolvedModule = loadAsync bvExternCompiles $ \rmref -> do
       -- Hash the contents of the source file + dependency hashes to
       -- get the unique signature of the module we're building.
       source <- liftBase $ B8.readFile path
-      let hash = makeModuleHash source (map snd deps)
+      let hash = initHashWithDeps source (map snd deps)
       -- If the hash matches, no more work needs to be done. Otherwise build.
       if storedHash == hash then pure (externs, hash)
         else do

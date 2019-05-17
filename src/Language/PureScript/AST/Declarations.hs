@@ -115,7 +115,7 @@ data SimpleErrorMessage
   | CycleInDeclaration Ident
   | CycleInTypeSynonym (Maybe (ProperName 'TypeName))
   | CycleInTypeClassDeclaration [Qualified (ProperName 'ClassName)]
-  | CycleInModules [ModuleName]
+  | CycleInModules [ModuleRef]
   | NameIsUndefined Ident
   | UndefinedTypeVariable (ProperName 'TypeName)
   | PartiallyAppliedSynonym (Qualified (ProperName 'TypeName))

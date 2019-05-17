@@ -1,9 +1,7 @@
 module Test where
 
 import Prelude
-
--- class Bleep a where
---   bleep :: a -> String
+import Foobar.Blab (bleep)
 
 foo :: String
-foo = show 1
+foo = show bleep

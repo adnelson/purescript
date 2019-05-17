@@ -75,4 +75,4 @@ toModule (CyclicSCC ms) =
     Just ms' ->
       throwError
         . errorMessage'' (fmap getModuleSourceSpan ms')
-        $ CycleInModules (map getModuleName ms)
+        $ CycleInModules (map (someModuleNamed . getModuleName) ms)

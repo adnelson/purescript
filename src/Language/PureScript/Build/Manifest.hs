@@ -94,8 +94,10 @@ createModulePathHashViewQ :: Query () ()
 createModulePathHashViewQ = fromString [r|
 CREATE VIEW module_full_meta
 AS SELECT
+  module_meta.rowid as module_id,
   package.name as package_name,
-  module_meta.path as path
+  module_meta.path as path,
+  module_meta.timestamp as module_stamp
 FROM module_meta
 INNER JOIN package_module_meta AS pmm ON pmm.module_meta = module_meta.rowid
 INNER JOIN package ON pmm.package = package.rowid;
@@ -110,8 +112,8 @@ getPackageRecordQ
         PackageRef, ModuleName)
 getPackageRecordQ = "SELECT * FROM package_dependency_record WHERE package_id = ?"
 
-getModuleMetaFromNameQ :: Query (Only ModuleName) (PackageRef, FilePath)
-getModuleMetaFromNameQ = "SELECT package_name, path FROM module_full_meta WHERE name = ?"
+getModuleMetaFromNameQ :: Query (Only ModuleName) (ModuleId, PackageRef, FilePath)
+getModuleMetaFromNameQ = "SELECT module_id, package_name, path FROM module_full_meta WHERE name = ?"
 
 getModuleMetaFromResolvedQ :: Query ResolvedModuleRef (Only FilePath)
 getModuleMetaFromResolvedQ = fromString [r|
@@ -119,31 +121,33 @@ SELECT path FROM module_full_meta
 WHERE package_name = ? AND module_name = ?
 |]
 
-insertModuleQ :: Query (ModuleName, FilePath, ModuleHash, UTCTime) ()
+insertModuleQ :: Query (ModuleName, FilePath, ModuleHash, ModuleStamp) ()
 insertModuleQ = "INSERT INTO module_meta (name, path) VALUES (?, ?, ?, ?)"
 
-insertModuleDependsQ :: Query (ModuleName, ModuleName) ()
+insertModuleDependsListQ :: Query (ModuleId, ModuleHash, ModuleStamp) ()
+insertModuleDependsListQ = "TODO"
+
+insertModuleDependsQ :: Query (ModuleId, ModuleId) ()
 insertModuleDependsQ = fromString [r|
-INSERT INTO module_depends (module_meta, depends) VALUES (
-  SELECT rowid FROM module_meta WHERE name = ?,
-  SELECT rowid FROM module_meta WHERE name = ?
+INSERT INTO module_depends (module_dep_list, depends) VALUES (
+  SELECT rowid FROM module_deps_lists WHERE module_meta = ?,
+  ?
 )
 |]
 
-type ModuleDependsListId = Int
 -- Get the ID of a module dependency list
-getModuleDependsListQ :: Query ResolvedModuleRef ModuleDependsListId
-getModuleDependsListQ = "TODO"
+getModuleDependsListIdQ :: Query ResolvedModuleRef ModuleDepListId
+getModuleDependsListIdQ = "TODO"
 
--- Get dependencies of a module. Pairs them with hashes
-getModuleDependsQ :: Query ModuleDependsListId (ResolvedModuleRef, ModuleHash)
+-- Get dependencies of a module. Pairs them with hashes/timestamps
+getModuleDependsQ :: Query ModuleDepListId (PackageRef, ModuleName, ModuleHash, ModuleStamp)
 getModuleDependsQ = "TODO"
 
 insertPackageQ :: Query (PackageRef, FilePath) ()
 insertPackageQ = "INSERT INTO package (name, path) VALUES (?, ?)"
 
-getPackageModulesQ :: Query (Only PackageId) (ModuleName, FilePath, ModuleHash, UTCTime)
+getPackageModulesQ :: Query PackageId (ModuleName, FilePath, ModuleHash, ModuleStamp)
 getPackageModulesQ = "TODO"
 
-getPackageRootQ :: Query (Only PackageId) (Only FilePath)
+getPackageRootQ :: Query PackageId (Only FilePath)
 getPackageRootQ = "TODO"
