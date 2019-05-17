@@ -110,10 +110,10 @@ newtype Stamp (a :: ObjType) = Stamp {tStamp :: UTCTime}
 readStamp :: FilePath -> IO (Stamp a)
 readStamp p = Stamp <$> D.getModificationTime p
 
-data TimedHash a = TimedHash { sHash :: !(Hash a), sStamp :: !(Stamp a) }
+data TimedHash a = TimedHash { thStamp :: !(Stamp a), thHash :: !(Hash a) }
   deriving (Show, Eq)
 instance Semigroup (TimedHash a) where
-  TimedHash h1 s1 <> TimedHash h2 s2 = TimedHash (h1 <> h2) (max s1 s2)
+  TimedHash s1 h1 <> TimedHash s2 h2 = TimedHash (max s1 s2) (h1 <> h2)
 instance FromRow (TimedHash a) where
   fromRow = fromRow >>= \(hash, stamp) -> pure (TimedHash hash stamp)
 instance ToRow (TimedHash a) where toRow (TimedHash h s) = toRow (h, s)
@@ -122,8 +122,10 @@ instance ToRow (TimedHash a) where toRow (TimedHash h s) = toRow (h, s)
 instance Semigroup (Hash a) where
   Hash h1 <> Hash h2 = Hash $ MD5.finalize $ MD5.update (MD5.update MD5.init h1) h2
 
-hashFile :: FilePath -> IO (Hash a)
-hashFile p = initHash <$> B8.readFile p
+hashFile :: FilePath -> IO (B8.ByteString, Hash a)
+hashFile p = do
+  contents <- B8.readFile p
+  pure (contents, initHash contents)
 
 initHash :: B8.ByteString -> Hash a
 initHash bs = Hash $ MD5.finalize $ MD5.update MD5.init bs
@@ -131,10 +133,18 @@ initHash bs = Hash $ MD5.finalize $ MD5.update MD5.init bs
 initHashWithDeps :: B8.ByteString -> [Hash a] -> Hash a
 initHashWithDeps source deps = foldr (<>) (initHash source) deps
 
+refreshTimedHash :: TimedHash a -> FilePath -> IO (TimedHash a, Maybe B8.ByteString)
+refreshTimedHash th@(TimedHash stamp _) path = do
+  stamp' <- readStamp path
+  case stamp' > stamp of
+    False -> pure (th, Nothing)
+    True -> do
+      (contents, hash) <- hashFile path
+      pure (TimedHash stamp' hash, Just contents)
+
 data ModuleRecord = ModuleRecord {
-  mrId :: ModuleId,
   mrHash :: !(TimedHash 'Mod),
-  mrDeps :: Set ResolvedModuleRef
+  mrDeps :: [ResolvedModuleRef]
   }
 
 data PackageRecord = PackageRecord (TimedHash 'Pkg) (Map ModuleName ModuleRecord)

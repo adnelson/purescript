@@ -446,37 +446,68 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
     Just trace -> do
       throwSimpleError $ CycleInModules (map (someModuleNamed . rmrModuleName) trace)
     Nothing -> do
-      -- Get dependency info
-      -- TODO check database
-      -- Loading for the first time.
       path <- getSourcePath r
-      stamp <- liftBase $ readStamp path
-      source <- liftBase $ B8.readFile path
-      unresolvedImports <- parseModuleImports path source
-      resolvedImportAsyncs <- forConcurrently unresolvedImports $ \mref -> do
-        -- Note that we're passing in the package ref of *this* module; i.e. the one
-        -- currently being loaded. By adding this info we can unambiguously determine which
-        -- package/module combo is the correct answer for this package.
-        rmref :: ResolvedModuleRef <- do
-          resolveModuleRef (rmrPackageRef r, mref) >>= wait
-        (rmref,) <$> getModuleRecord (pushTrace r trace) rmref
+      -- See if it's in the database; if so it will have a hash and timestamp.
+      (withConn (query getModuleDependsListQ mId) :: m [(ModuleStamp, ModuleHash)]) >>= \case
+        (mstamp, mhash):_ -> do
+          -- There's an entry in the database. But is it up-to-date? First check the timestamp.
+          let curHash = TimedHash mstamp mhash
+          (latestHash@(TimedHash latestStamp _), maybeSource) <- do
+            liftBase $ refreshTimedHash curHash path
+          depRefs :: Either [ModuleRef] [ResolvedModuleRef] <- case maybeSource of
+            -- There's a new file; we need to reparse.
+            Just source -> Left <$> parseModuleImports path source
+            -- If it hasn't changed, then we can reuse the same dependency list from before.
+            Nothing -> Right <$> do
+              rows <- withConn (query getModuleDependsQ mId)
+              pure $ flip map rows $ \(rmrModuleId, rmrPackageRef, rmrModuleName) -> do
+                ResolvedModuleRef {..}
 
-      depInfos :: [(ResolvedModuleRef, ModuleRecord)] <- do
-        forM resolvedImportAsyncs $ \(rmref, a) -> do
-          recd :: ModuleRecord <- wait a
-          pure (rmref, recd)
+          rmrefs <- case depRefs of
+            Left unresolved -> undefined
+            Right rmrefs -> pure rmrefs
+          -- Recur on these dependencies
+          depRecords :: [ModuleRecord] <- do
+            asyncs <- forM rmrefs $ getModuleRecord (pushTrace r trace)
+            mapM wait asyncs
+          -- Compute the hash off of dependencies
+          let hash'@(TimedHash stamp hash) = foldr (<>) latestHash (mrHash <$> depRecords)
+          withConn $ \conn -> do
+            execute insertModuleDependsListQ (mId, stamp, hash) conn
+            let rows = flip map rmrefs $ \r -> (mId, rmrModuleId r)
+            executeMany insertModuleDependsQ rows conn
 
-      let depHashes = map (mrHash . snd) depInfos
-      let thash@(TimedHash hash' stamp') =
-            foldr (<>) (TimedHash (initHash source) stamp) depHashes
+          pure $ ModuleRecord hash' rmrefs
 
-      withConn $ \conn -> do
-        -- Create a module dependency list
-        execute insertModuleDependsListQ (mId, hash', stamp') conn
-        let depIds = map (mrId . snd) depInfos
-        executeMany insertModuleDependsQ ((mId,) <$> depIds) conn
+        [] -> do
+          -- No dependencies recorded in the database.
+          stamp <- liftBase $ readStamp path
+          source <- liftBase $ B8.readFile path
+          unresolvedImports <- parseModuleImports path source
+          resolvedImportAsyncs <- forConcurrently unresolvedImports $ \mref -> do
+            -- Note that we're passing in the package ref of *this* module; i.e. the one
+            -- currently being loaded. By adding this info we can unambiguously determine which
+            -- package/module combo is the correct answer for this package.
+            rmref :: ResolvedModuleRef <- do
+              resolveModuleRef (rmrPackageRef r, mref) >>= wait
+            (rmref,) <$> getModuleRecord (pushTrace r trace) rmref
 
-      pure $ ModuleRecord mId thash (S.fromList $ map fst depInfos)
+          depInfos :: [(ResolvedModuleRef, ModuleRecord)] <- do
+            forM resolvedImportAsyncs $ \(rmref, a) -> do
+              recd :: ModuleRecord <- wait a
+              pure (rmref, recd)
+
+          let depHashes = map (mrHash . snd) depInfos
+          let thash@(TimedHash stamp' hash') =
+                foldr (<>) (TimedHash stamp (initHash source)) depHashes
+
+          withConn $ \conn -> do
+            -- Create a module dependency list
+            execute insertModuleDependsListQ (mId, stamp', hash') conn
+            let depIds = map (rmrModuleId . fst) depInfos
+            executeMany insertModuleDependsQ ((mId,) <$> depIds) conn
+
+          pure $ ModuleRecord thash (map fst resolvedImportAsyncs)
 
 -- | Asynchronously load a package record.
 -- This basically adds an additional layer of validation on top of
