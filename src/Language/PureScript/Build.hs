@@ -176,9 +176,6 @@ parseModule path source = do
 parseModuleImports :: Build m => FilePath -> B8.ByteString -> m [ModuleRef]
 parseModuleImports path source = getModuleImports <$> parseModule path source
 
--- rmrefToId :: Build m => ResolvedModuleRef -> m ModuleId
--- rmrefToId =
-
 -- | Resolve a module reference. Success means the module has a valid
 -- and unambiguous name, and hence a known path.
 --
@@ -199,9 +196,9 @@ parseModuleImports path source = getModuleImports <$> parseModule path source
 --
 -- With the above rules, we can see that we can't cache modulerefs on
 -- their own, because the origin of the reference affects the correct
--- resolution. But we *can* cache a moduleref PLUS packageref, so
--- references to the same module coming from the same package don't need to
--- be repeatedly looked up.
+-- resolution. But we *can* cache a moduleref PLUS the packageref of
+-- its origin, so references to the same module coming from the same
+-- package don't need to be repeatedly looked up.
 --
 resolveModuleRef
   :: forall m. Build m
@@ -242,120 +239,6 @@ getSourcePath :: Build m => ResolvedModuleRef -> m FilePath
 getSourcePath rmref = do
   PackageMeta root _ <- getPackageMeta (rmrPackageRef rmref) >>= wait
   pure $ root </> moduleNameToRelPath (rmrModuleName rmref)
-
-
-  --   rmref -> do
-  -- withConn (query getModuleMetaFromResolvedQ rmref) >>= \case
-  --   [] -> searchForModule mref >>= wait
-  --   (Only path):_ -> pure path
-
--- | Look up the path to a module on disk. These are cached in the database.
--- At this step we also determine if a module is local or packaged.
--- getSourcePathCached :: Build m => ModuleRef -> m (ResolvedModuleRef, FilePath)
--- getSourcePathCached mref@(ModuleReference maybePkgName mname) = do
---   case maybePkgName of
---     Just pname -> do
---       let rmref = ResolvedModuleRef (DepPackage pname) mname
---       withConn (query getModuleMetaFromResolvedQ rmref) >>= \case
---         [] -> searchForModule mref >>= wait
---         (Only path):_ -> pure (rmref, path)
---     Nothing -> do
---       withConn (query getModuleMetaFromNameQ (Only mname)) >>= \case
---         [] -> searchForModule mref >>= wait
---         [(pref, path)] -> pure (ResolvedModuleRef pref mname, path)
---         _ -> throwSimpleError $ AmbiguousModule mref
-
--- getPackageRecord :: forall m. Build m => PackageName -> m (AsyncLoad m PackageRecord)
--- getPackageRecord = loadAsync bvPackageRecords $ \pkgName -> do
---   BuildVars { bvConfig = BuildConfig {..}, ..} <- ask
---   withConn (query getPackageRecordQ (Only pkgName)) >>= \case
---     [] -> discoverPackage pkgName bcPackageLocations >>= \case
---       Uncompiled (ModulesAndRoot root modNames) -> undefined :: m PackageRecord
---       Precompiled dbPath -> undefined :: m PackageRecord
---     _modNames -> undefined :: m PackageRecord
-
-{-
-
-
-
-to get a package record, we need to flatten:
-
-{
-  name: string,
-  hash: string,
-  modules: map string {
-    path: string,
-    hash: string,
-    refs: set {
-      package: option string,
-      module: string
-    }
-  }
-}
-
-So the columns would be:
-
-package_name | package_hash | module_name | path | hash | ref_package | ref_module
-
-Could normalize these, but not sure of performance tradeoff.
-
--}
-
--- loadPackage :: Build m => PackageRef -> m (AsyncLoad m PackageRecord)
--- loadPackage pref = do
---   (connMV, locations) <- (,) <$> asks bvPackageLocations <*> asks bvConn
---   discoverPackage pname locations >>= \case
---     Uncompiled (ModulesAndRoot root moduleNames) -> do
---       -- Store all of the modules
---       forM_ moduleNames $ \modName -> do
---         let path = root </> moduleNameToRelPath modName
---         withMVar connMV $ \conn ->
---           liftBase $ execute conn storePathToDepModuleQ (pname, modName, path)
---       -- Compile all of the modules
---       fmap M.fromList $ forM moduleNames $ \modName -> do
---         job <- buildResolvedModule (DepModule pname modName)
---         (externs, hash) <- wait job
---         pure (modName, (externs, hash))
---     Precompiled dbpath -> do
---       pkgManifestConn <- liftBase $ open dbpath
---       withMVar connMV $ \conn -> liftBase $ do
---         putStrLn $ "Loading precompiled modules from package " <> show n
---         mods <- query_ pkgManifestConn readPrecompiledExternsQuery
---         let rows = flip map mods $ \(mn, ef, hash) -> (pn, mn, ef, hash)
---         executeMany conn addDepModuleQuery rows
---         putStrLn $ "Imported " <> show (length pkgModules) <> " modules from " <> show n
-
---
--- * Start with some module ref and a config (captured via monadic
--- * context). Note we don't yet know if the module ref (or indeed
--- * much of anything else) is valid.
---
--- conceptual type: ModuleRef + Config
---
--- * Translate into resolved module references. This is the set of discovered
--- * modules. We know that the directories are structured correctly, all listed package requirements and
--- * that each package has at least one discovered module.
--- * The returned timestamp can be used to avoid having to load a file from disk.
---
--- conceptual type: AsyncLoad ResolvedModuleRef (FilePath, Timestamp)
--- implemented with:
---
--- * Given a starting point amongs the discovered modules, build the
--- * module dependency tree. When this step completes, we'll know that
--- * modules are acyclic, that all modules referenced were
--- * unambiguously defined, and that module files are parsable at
--- * least as far as imports go.  In addition to returning a list of
--- * modules, this returns a unique hash which can be compared to for
--- * rebuilds.
---
--- conceptual type: Map ResolvedModuleRef (Set ResolvedModuleRef, ModuleStamp)
---
--- * Beginning from the same starting module as the previous step, compile
--- * all required modules to javascript. When this step completes, we'll
--- * know that everything type checked and code-generated correctly.
---
--- conceptual type: Map ResolvedModuleRef (Externs, FilePath)
---
 
 -- | Asynchronously load the names of all of the modules in a package.
 -- If this successfully completes, it means:
@@ -401,40 +284,6 @@ getPackageMeta = loadAsync bvPackageModules $ \pref -> do
           pure $ PackageMeta root $ M.fromList namesAndIds
         Precompiled manifestPath -> error "precompiled manifests not yet implemented"
 
-    {-
-
-Could do something like:
-
-Id | Package | Module  | Path
-1  | ''      | Foo.Bar | src/Foo/Bar.purs
-2  | ''      | Foo.Baz | src/Foo/Baz.purs
-3  | ''      | Foo     | src/Foo.purs
-
--- Imagine that Foo.Baz depends on Foo.Bar and Foo depends on Foo.Bar and Foo.Baz.
-
--- Module depends table (presence in row means list has been loaded)
-Id | Module
-1  | 2       -- Dependencies have been loaded for Foo.Baz
-2  | 1       -- Dependencies loaded for Foo.Bar
-3  | 3       -- Dependencies loaded for Foo
-
-
--- | Module dependency table (individual dependencies)
-Id | ModuleDepends | Dependency
-1  | 1  (Foo.Baz)  | 1 (Foo.Bar)
-1  | 3  (Foo)      | 1 (Foo.Bar)
-1  | 3  (Foo)      | 2 (Foo.Baz)
-
-so, storing whether modules have been loaded or not in the database. Since it's behind an mvar this should be safe, but it feels dirty. Maybe:
-
--- Module meta table
-Module  | Path
-Foo.Bar | src/Foo/Bar.purs
-
--- Module "dependencies loaded" table
-Module | Depend
-
--}
 
 -- | Asynchronously load a module record.
 -- Since this will recur on dependencies of a module, it can detect cycles.
@@ -511,35 +360,6 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
 
           pure $ ModuleRecord path stamp (map fst resolvedImportAsyncs)
 
--- | Asynchronously load a package record.
--- This basically adds an additional layer of validation on top of
--- 'getPackageMeta'. Specifically, successful completion means that the
--- full dependency tree of the package (including modules required
--- from other packages) is known, and that there are no cyclic
--- dependencies. It does NOT mean that the modules will compile
--- successfully.
-getPackageRecord
-  :: forall m. Build m => PackageRef -> m (AsyncLoad m PackageRecord)
-getPackageRecord = loadAsync bvPackageRecords $ \pref -> do
-  PackageMeta root modules <- getPackageMeta pref >>= wait
-  resolvedMods <- forConcurrently (M.keys modules) $ \modName -> do
-    let path = root </> moduleNameToRelPath modName
-    source <- liftBase $ B8.readFile path
-    imports <- parseModuleImports path source >>= mapM (\mref -> resolveModuleRef pref mref)
-    undefined :: m Int
-  undefined :: m PackageRecord
-
--- | Build a list of modules in parallel.
-buildModules :: Build m => PackageRef -> [ModuleRef] -> m [(ExternsFile, ModuleStamp)]
-buildModules pref = mapM (buildModule pref >=> wait)
-
--- NOTE: Is this the spot to do cycle detection?
-buildModule
-  :: forall m. Build m
-  => PackageRef -> ModuleRef -> m (AsyncLoad m (ExternsFile, ModuleStamp))
-buildModule pref mref = do
-  rmref <- resolveModuleRef pref mref >>= wait
-  buildResolvedModule rmref
 
 -- | Given a resolved module reference, compile it into externs. This result is cached.
 buildResolvedModule
