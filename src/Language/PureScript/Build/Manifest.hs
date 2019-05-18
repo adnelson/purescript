@@ -105,8 +105,13 @@ INNER JOIN package ON pmm.package = package.rowid;
 ----------------- INSERTS
 
 
-insertModuleQ :: Query (ModuleName, FilePath, ModuleHash, ModuleStamp) ()
-insertModuleQ = "INSERT INTO module_meta (name, path) VALUES (?, ?, ?, ?)"
+insertModuleQ :: Query (PackageRef, ModuleName, ModuleStamp, ModuleHash) ()
+insertModuleQ = fromString [r|
+INSERT INTO module_meta (package, name, stamp, hash) VALUES (
+  SELECT rowid FROM package WHERE package.name = ?,
+  ?, ?, ?
+)
+|]
 
 insertModuleDependsListQ :: Query (ModuleId, ModuleStamp, ModuleHash) ()
 insertModuleDependsListQ = "TODO"
@@ -134,7 +139,10 @@ getModuleDependsListQ = "TODO"
 getModuleDependsQ :: Query ModuleId (ModuleId, PackageRef, ModuleName)
 getModuleDependsQ = "TODO"
 
-getPackageModulesQ :: Query PackageId (ModuleName, FilePath, ModuleHash, ModuleStamp)
+getPackageModulesFromIdQ :: Query PackageId (ModuleName, ModuleId)
+getPackageModulesFromIdQ = "TODO"
+
+getPackageModulesQ :: Query (Only PackageRef) (ModuleName, ModuleId)
 getPackageModulesQ = "TODO"
 
 getPackageRootQ :: Query PackageId (Only FilePath)

@@ -143,6 +143,7 @@ refreshTimedHash th@(TimedHash stamp _) path = do
       pure (TimedHash stamp' hash, Just contents)
 
 data ModuleRecord = ModuleRecord {
+  mrPath :: FilePath,
   mrHash :: !(TimedHash 'Mod),
   mrDeps :: [ResolvedModuleRef]
   }
@@ -153,6 +154,9 @@ data ModuleTrace = ModuleTrace {
   mtUnordered :: Set ResolvedModuleRef,
   mtOrdered :: [ResolvedModuleRef]
   }
+
+newTrace :: ModuleTrace
+newTrace = ModuleTrace mempty mempty
 
 pushTrace :: ResolvedModuleRef -> ModuleTrace -> ModuleTrace
 pushTrace rmr (ModuleTrace u o) = ModuleTrace (S.insert rmr u) (rmr:o)

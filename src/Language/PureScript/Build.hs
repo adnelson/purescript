@@ -369,40 +369,38 @@ getPackageMeta
   -> m (AsyncLoad m PackageMeta)
 getPackageMeta = loadAsync bvPackageModules $ \pref -> do
   res <- withConn (query getPackageIdQ (Only pref))
-  undefined :: m PackageMeta
+  case res of
+    -- If we have a package ID the modules of that package have been discovered.
+    (pkgId, root):_ -> do
+      modules :: Map ModuleName ModuleId <- M.fromList <$> do
+        withConn (query getPackageModulesFromIdQ pkgId)
+      pure $ PackageMeta root modules
 
--- loadPackageMeta :: forall m. Bui
-  -- case res of
-  --   -- If we have a package ID the modules of that package have been discovered.
-  --   (pkgId, root):_ -> do
-  --     modules :: Map ModuleName ModuleMeta <- M.fromList <$> do
-  --       res <- withConn (query getPackageModulesQ pkgId)
-  --       pure $ map (\(m, p, h, s) -> (m, (ModuleMeta p (TimedHash h s)))) res
-  --     pure $ PackageMeta root modules
+    -- If we don't have that package, we have to load it.
+    _ -> do
+      -- s <- ask
+      let locations :: [FilePath] = undefined -- <- bcPackageLocations . bvConfig <$> ask
+      discoverPackage pref locations >>= \case
+        Uncompiled (ModulesAndRoot root modNames) -> do
+          -- Load each module in the db. Since this is the first time
+          -- reading them, we record the stamp with no comparison.
+          timedHashes <- forConcurrently modNames $ \n -> do
+            let path = root </> moduleNameToRelPath n
+            stamp <- liftBase $ readStamp path
+            (_, hash) <- liftBase $ hashFile path
+            pure (n, TimedHash stamp hash)
 
-  --   -- If we don't have that package, we have to load it.
-  --   _ -> do
-  --     s <- ask
-  --     let locations :: [FilePath] = undefined -- <- bcPackageLocations . bvConfig <$> ask
-  --     liftBase (discoverPackage pref locations) >>= \case
-  --       Uncompiled (ModulesAndRoot root modNames) -> do
-  --         -- Load each module in the db. Since this is the first time
-  --         -- reading them, we record the stamp with no comparison.
-  --         timedHashes <- forConcurrently modNames $ \n -> do
-  --           let path = root </> moduleNameToRelPath n
-  --           stamp <- liftBase $ readStamp path
-  --           contents <- liftBase $ hashFile path
-  --           pure $ (n, TimedHash stamp contents)
+          -- Once modules are loaded, we can put them in the database.
+          namesAndIds <- withConn $ \conn -> do
+            execute insertPackageQ (pref, root) conn
+            let rows = map (\(n, TimedHash s h) -> (pref, n, s, h)) timedHashes
+            executeMany insertModuleQ rows conn
+            -- As a last step grab all of the newly inserted rows
+            query getPackageModulesQ (Only pref) conn
 
-  --         -- Once modules are loaded, we can put them in the database.
-  --         withConn $ \conn -> do
-  --           execute insertPackageQ (pref, root) conn
-  --           executeMany insertModuleQ $ map (\(n, TimedHash t h) -> (pref, n, t, h)) timedHashes
-
-  --         -- Construct the package record.
-  --         let modules = M.fromList $ flip map timedHashes $ \(mn, th) -> _what
-  --         pure $ PackageMeta root modules
-  --       Precompiled manifestPath -> error "precompiled manifests not yet implemented"
+          -- Construct the package record.
+          pure $ PackageMeta root $ M.fromList namesAndIds
+        Precompiled manifestPath -> error "precompiled manifests not yet implemented"
 
     {-
 
@@ -483,7 +481,7 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
             let rows = flip map rmrefs $ \r -> (mId, rmrModuleId r)
             executeMany insertModuleDependsQ rows conn
 
-          pure $ ModuleRecord hash' rmrefs
+          pure $ ModuleRecord path hash' rmrefs
 
         [] -> do
           -- No dependencies recorded in the database.
@@ -513,7 +511,7 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
             let depIds = map (rmrModuleId . fst) depInfos
             executeMany insertModuleDependsQ ((mId,) <$> depIds) conn
 
-          pure $ ModuleRecord thash (map fst resolvedImportAsyncs)
+          pure $ ModuleRecord path thash (map fst resolvedImportAsyncs)
 
 -- | Asynchronously load a package record.
 -- This basically adds an additional layer of validation on top of
@@ -551,20 +549,19 @@ buildResolvedModule
   => ResolvedModuleRef -> m (AsyncLoad m (ExternsFile, ModuleHash))
 buildResolvedModule = loadAsync bvExternCompiles $ \rmref -> do
   let pref = rmrPackageRef rmref
-  path <- getSourcePath rmref
+  ModuleRecord path timedHash depRefs <- getModuleRecord newTrace rmref >>= wait
+  -- Build dependencies.
+  deps :: [(ExternsFile, ModuleHash)] <- forConcurrently depRefs (buildResolvedModule >=> wait)
   getCachedBuildFromDatabase rmref >>= \case
     Nothing -> do
       -- No cached build; needs to be built from scratch.
       source <- liftBase $ B8.readFile path
       modl <- parseModule path source
-      deps <- buildModules pref $ getModuleImports modl
       let hash = initHashWithDeps source (map snd deps)
       externs <- compileModule (map fst deps) modl
       (externs, hash) <$ cacheBuildInDatabase rmref (CachedBuild externs hash)
 
     Just (CachedBuild externs storedHash) -> do
-      -- Build dependencies first.
-      deps <- buildModules pref $ efImportedModuleRefs externs
       -- Hash the contents of the source file + dependency hashes to
       -- get the unique signature of the module we're building.
       source <- liftBase $ B8.readFile path
