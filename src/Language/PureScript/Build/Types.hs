@@ -46,7 +46,7 @@ instance FromField PackageRef where
 
 data CachedBuild = CachedBuild {
   cbExterns :: !ExternsFile,
-  cbHash :: !(Hash 'Mod)
+  cbStamp :: !(Stamp 'Mod)
   } deriving (Show)
 
 -- | Distinct from the normal moduleref type, which can refer to either a
@@ -76,7 +76,7 @@ data PackageMeta = PackageMeta {
   pmModules :: Map ModuleName ModuleId
   } deriving (Show, Eq)
 
-data ModuleMeta = ModuleMeta !ModuleId !FilePath !(TimedHash 'Mod)
+data ModuleMeta = ModuleMeta !ModuleId !FilePath !(Stamp 'Mod)
   deriving (Show, Eq)
 
 data HasId
@@ -101,22 +101,15 @@ newtype Hash (a :: ObjType) = Hash { unHash :: B8.ByteString }
   deriving (Show, Eq, FromField, ToField)
 
 type PackageHash = Hash 'Pkg
-type ModuleHash = Hash 'Mod
-type ModuleStamp = Stamp 'Mod
 
 newtype Stamp (a :: ObjType) = Stamp {tStamp :: UTCTime}
   deriving (Show, Eq, Ord, FromField, ToField)
+instance Semigroup (Stamp a) where (<>) = max
+
+type ModuleStamp = Stamp 'Mod
 
 readStamp :: FilePath -> IO (Stamp a)
 readStamp p = Stamp <$> D.getModificationTime p
-
-data TimedHash a = TimedHash { thStamp :: !(Stamp a), thHash :: !(Hash a) }
-  deriving (Show, Eq)
-instance Semigroup (TimedHash a) where
-  TimedHash s1 h1 <> TimedHash s2 h2 = TimedHash (max s1 s2) (h1 <> h2)
-instance FromRow (TimedHash a) where
-  fromRow = fromRow >>= \(hash, stamp) -> pure (TimedHash hash stamp)
-instance ToRow (TimedHash a) where toRow (TimedHash h s) = toRow (h, s)
 
 -- TODO could be a more efficient/correct way to implement this
 instance Semigroup (Hash a) where
@@ -133,22 +126,22 @@ initHash bs = Hash $ MD5.finalize $ MD5.update MD5.init bs
 initHashWithDeps :: B8.ByteString -> [Hash a] -> Hash a
 initHashWithDeps source deps = foldr (<>) (initHash source) deps
 
-refreshTimedHash :: TimedHash a -> FilePath -> IO (TimedHash a, Maybe B8.ByteString)
-refreshTimedHash th@(TimedHash stamp _) path = do
+refreshStamp :: Stamp a -> FilePath -> IO (Stamp a, Maybe B8.ByteString)
+refreshStamp stamp path = do
   stamp' <- readStamp path
   case stamp' > stamp of
-    False -> pure (th, Nothing)
+    False -> pure (stamp, Nothing)
     True -> do
       (contents, hash) <- hashFile path
-      pure (TimedHash stamp' hash, Just contents)
+      pure (stamp', Just contents)
 
 data ModuleRecord = ModuleRecord {
   mrPath :: FilePath,
-  mrHash :: !(TimedHash 'Mod),
+  mrStamp :: !(Stamp 'Mod),
   mrDeps :: [ResolvedModuleRef]
   }
 
-data PackageRecord = PackageRecord (TimedHash 'Pkg) (Map ModuleName ModuleRecord)
+data PackageRecord = PackageRecord (Stamp 'Pkg) (Map ModuleName ModuleRecord)
 
 data ModuleTrace = ModuleTrace {
   mtUnordered :: Set ResolvedModuleRef,

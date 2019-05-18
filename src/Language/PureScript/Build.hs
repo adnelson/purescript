@@ -79,7 +79,7 @@ data BuildVars m = BuildVars {
   bvPackageRecords :: AsyncLoads m PackageRef PackageRecord,
   -- ^ Caches the full dependency tree of modules within a package.
 
-  bvExternCompiles :: AsyncLoads m ResolvedModuleRef (ExternsFile, ModuleHash),
+  bvExternCompiles :: AsyncLoads m ResolvedModuleRef (ExternsFile, ModuleStamp),
   -- ^ Caches built modules.
 
   bvResolvedMods :: AsyncLoads m (PackageRef, ModuleRef) ResolvedModuleRef,
@@ -90,7 +90,7 @@ data BuildVars m = BuildVars {
 --  bvPackagePaths :: AsyncLoads m PackageName FilePath,
 --  bvModules :: AsyncLoads m ModuleRef (ResolvedModuleRef, FilePath),
 --  bvModulePaths :: AsyncLoads m ResolvedModuleRef FilePath,
---  bvModuleRefs :: AsyncLoads m ResolvedModuleRef (Set ResolvedModuleRef, ModuleHash),
+--  bvModuleRefs :: AsyncLoads m ResolvedModuleRef (Set ResolvedModuleRef, ModuleStamp),
   }
 
 type Build m = (MonadBaseControl IO m, MonadReader (BuildVars m) m,
@@ -205,8 +205,8 @@ parseModuleImports path source = getModuleImports <$> parseModule path source
 --
 resolveModuleRef
   :: forall m. Build m
-  => (PackageRef, ModuleRef) -> m (AsyncLoad m ResolvedModuleRef)
-resolveModuleRef = loadAsync bvResolvedMods $ \(pref, ModuleRef mPkg name) -> case mPkg of
+  => PackageRef -> ModuleRef -> m (AsyncLoad m ResolvedModuleRef)
+resolveModuleRef = curry $ loadAsync bvResolvedMods $ \(pref, ModuleRef mPkg name) -> case mPkg of
   Just pname -> do
     -- We don't need to use the information here; just make sure that it loaded successfully
     PackageMeta _ mods <- getPackageMeta (DepPackage pname) >>= wait
@@ -348,7 +348,7 @@ Could normalize these, but not sure of performance tradeoff.
 -- * modules, this returns a unique hash which can be compared to for
 -- * rebuilds.
 --
--- conceptual type: Map ResolvedModuleRef (Set ResolvedModuleRef, ModuleHash)
+-- conceptual type: Map ResolvedModuleRef (Set ResolvedModuleRef, ModuleStamp)
 --
 -- * Beginning from the same starting module as the previous step, compile
 -- * all required modules to javascript. When this step completes, we'll
@@ -384,16 +384,15 @@ getPackageMeta = loadAsync bvPackageModules $ \pref -> do
         Uncompiled (ModulesAndRoot root modNames) -> do
           -- Load each module in the db. Since this is the first time
           -- reading them, we record the stamp with no comparison.
-          timedHashes <- forConcurrently modNames $ \n -> do
+          stamps <- forConcurrently modNames $ \n -> do
             let path = root </> moduleNameToRelPath n
             stamp <- liftBase $ readStamp path
-            (_, hash) <- liftBase $ hashFile path
-            pure (n, TimedHash stamp hash)
+            pure (n, stamp)
 
           -- Once modules are loaded, we can put them in the database.
           namesAndIds <- withConn $ \conn -> do
             execute insertPackageQ (pref, root) conn
-            let rows = map (\(n, TimedHash s h) -> (pref, n, s, h)) timedHashes
+            let rows = map (\(n, s) -> (pref, n, s)) stamps
             executeMany insertModuleQ rows conn
             -- As a last step grab all of the newly inserted rows
             query getPackageModulesQ (Only pref) conn
@@ -450,12 +449,10 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
     Nothing -> do
       path <- getSourcePath r
       -- See if it's in the database; if so it will have a hash and timestamp.
-      (withConn (query getModuleDependsListQ mId) :: m [(ModuleStamp, ModuleHash)]) >>= \case
-        (mstamp, mhash):_ -> do
+      (withConn (query getModuleStampQ mId) :: m [Only ModuleStamp]) >>= \case
+        (Only mstamp):_ -> do
           -- There's an entry in the database. But is it up-to-date? First check the timestamp.
-          let curHash = TimedHash mstamp mhash
-          (latestHash@(TimedHash latestStamp _), maybeSource) <- do
-            liftBase $ refreshTimedHash curHash path
+          (latestStamp, maybeSource) <- liftBase $ refreshStamp mstamp path
           depRefs :: Either [ModuleRef] [ResolvedModuleRef] <- case maybeSource of
             -- There's a new file; we need to reparse.
             Just source -> Left <$> parseModuleImports path source
@@ -466,8 +463,10 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
                 ResolvedModuleRef {..}
 
           rmrefs <- case depRefs of
-            Left unresolved -> undefined
+            -- Already resolved: return as-is
             Right rmrefs -> pure rmrefs
+            -- Load unresolved references
+            Left unresolved -> forConcurrently unresolved $ resolveModuleRef pref >=> wait
 
           -- Recur on these dependencies
           depRecords :: [ModuleRecord] <- do
@@ -475,13 +474,13 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
             mapM wait asyncs
 
           -- Compute the hash off of dependencies
-          let hash'@(TimedHash stamp hash) = foldr (<>) latestHash (mrHash <$> depRecords)
+          let stamp = foldr (<>) latestStamp (mrStamp <$> depRecords)
           withConn $ \conn -> do
-            execute insertModuleDependsListQ (mId, stamp, hash) conn
+            execute insertModuleDependsListQ (mId, stamp) conn
             let rows = flip map rmrefs $ \r -> (mId, rmrModuleId r)
             executeMany insertModuleDependsQ rows conn
 
-          pure $ ModuleRecord path hash' rmrefs
+          pure $ ModuleRecord path stamp rmrefs
 
         [] -> do
           -- No dependencies recorded in the database.
@@ -493,7 +492,7 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
             -- currently being loaded. By adding this info we can unambiguously determine which
             -- package/module combo is the correct answer for this package.
             rmref :: ResolvedModuleRef <- do
-              resolveModuleRef (rmrPackageRef r, mref) >>= wait
+              resolveModuleRef (rmrPackageRef r) mref >>= wait
             (rmref,) <$> getModuleRecord (pushTrace r trace) rmref
 
           depInfos :: [(ResolvedModuleRef, ModuleRecord)] <- do
@@ -501,17 +500,16 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
               recd :: ModuleRecord <- wait a
               pure (rmref, recd)
 
-          let depHashes = map (mrHash . snd) depInfos
-          let thash@(TimedHash stamp' hash') =
-                foldr (<>) (TimedHash stamp (initHash source)) depHashes
+          let depStamps = map (mrStamp . snd) depInfos
+          let stamp' = foldr (<>) stamp depStamps
 
           withConn $ \conn -> do
             -- Create a module dependency list
-            execute insertModuleDependsListQ (mId, stamp', hash') conn
+            execute insertModuleDependsListQ (mId, stamp') conn
             let depIds = map (rmrModuleId . fst) depInfos
             executeMany insertModuleDependsQ ((mId,) <$> depIds) conn
 
-          pure $ ModuleRecord path thash (map fst resolvedImportAsyncs)
+          pure $ ModuleRecord path stamp (map fst resolvedImportAsyncs)
 
 -- | Asynchronously load a package record.
 -- This basically adds an additional layer of validation on top of
@@ -527,52 +525,42 @@ getPackageRecord = loadAsync bvPackageRecords $ \pref -> do
   resolvedMods <- forConcurrently (M.keys modules) $ \modName -> do
     let path = root </> moduleNameToRelPath modName
     source <- liftBase $ B8.readFile path
-    imports <- parseModuleImports path source >>= mapM (\mref -> resolveModuleRef (pref, mref))
+    imports <- parseModuleImports path source >>= mapM (\mref -> resolveModuleRef pref mref)
     undefined :: m Int
   undefined :: m PackageRecord
 
 -- | Build a list of modules in parallel.
-buildModules :: Build m => PackageRef -> [ModuleRef] -> m [(ExternsFile, ModuleHash)]
+buildModules :: Build m => PackageRef -> [ModuleRef] -> m [(ExternsFile, ModuleStamp)]
 buildModules pref = mapM (buildModule pref >=> wait)
 
 -- NOTE: Is this the spot to do cycle detection?
 buildModule
   :: forall m. Build m
-  => PackageRef -> ModuleRef -> m (AsyncLoad m (ExternsFile, ModuleHash))
+  => PackageRef -> ModuleRef -> m (AsyncLoad m (ExternsFile, ModuleStamp))
 buildModule pref mref = do
-  rmref <- resolveModuleRef (pref, mref) >>= wait
+  rmref <- resolveModuleRef pref mref >>= wait
   buildResolvedModule rmref
 
 -- | Given a resolved module reference, compile it into externs. This result is cached.
 buildResolvedModule
   :: forall m. Build m
-  => ResolvedModuleRef -> m (AsyncLoad m (ExternsFile, ModuleHash))
+  => ResolvedModuleRef -> m (AsyncLoad m (ExternsFile, ModuleStamp))
 buildResolvedModule = loadAsync bvExternCompiles $ \rmref -> do
   let pref = rmrPackageRef rmref
-  ModuleRecord path timedHash depRefs <- getModuleRecord newTrace rmref >>= wait
-  -- Build dependencies.
-  deps :: [(ExternsFile, ModuleHash)] <- forConcurrently depRefs (buildResolvedModule >=> wait)
+  -- Get dependencies from the record and recur on them first.
+  ModuleRecord path stamp depRefs <- getModuleRecord newTrace rmref >>= wait
+  deps :: [(ExternsFile, ModuleStamp)] <- forConcurrently depRefs (buildResolvedModule >=> wait)
+
   getCachedBuildFromDatabase rmref >>= \case
-    Nothing -> do
-      -- No cached build; needs to be built from scratch.
+    -- If the stored stamp is up to date, return immediately
+    Just (CachedBuild externs stamp') | stamp' >= stamp -> pure (externs, stamp')
+
+    -- Otherwise, rebuild the module, cache it and return the new stamp.
+    _ -> do
       source <- liftBase $ B8.readFile path
       modl <- parseModule path source
-      let hash = initHashWithDeps source (map snd deps)
       externs <- compileModule (map fst deps) modl
-      (externs, hash) <$ cacheBuildInDatabase rmref (CachedBuild externs hash)
-
-    Just (CachedBuild externs storedHash) -> do
-      -- Hash the contents of the source file + dependency hashes to
-      -- get the unique signature of the module we're building.
-      source <- liftBase $ B8.readFile path
-      let hash = initHashWithDeps source (map snd deps)
-      -- If the hash matches, no more work needs to be done. Otherwise build.
-      if storedHash == hash then pure (externs, hash)
-        else do
-          -- A failure here could also be stored in the database, to
-          -- prevent meaningless rebuilds...
-          externs' <- parseModule path source >>= compileModule (map fst deps)
-          (externs', hash) <$ cacheBuildInDatabase rmref (CachedBuild externs hash)
+      (externs, stamp) <$ cacheBuildInDatabase rmref (CachedBuild externs stamp)
 
 
 cfg :: BuildConfig

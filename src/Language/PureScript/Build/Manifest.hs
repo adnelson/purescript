@@ -35,8 +35,7 @@ CREATE TABLE module_meta (
   name TEXT NOT NULL,
   -- Path is null if there's no source code available
   path TEXT UNIQUE,
-  hash BLOB NOT NULL, -- MD5 hash of file contents
-  timestamp TEXT NOT NULL -- timestamp at time of hash
+  timestamp TEXT -- timestamp at time of hash (null if not yet loaded)
 );
 |]
 
@@ -105,15 +104,15 @@ INNER JOIN package ON pmm.package = package.rowid;
 ----------------- INSERTS
 
 
-insertModuleQ :: Query (PackageRef, ModuleName, ModuleStamp, ModuleHash) ()
+insertModuleQ :: Query (PackageRef, ModuleName, ModuleStamp) ()
 insertModuleQ = fromString [r|
-INSERT INTO module_meta (package, name, stamp, hash) VALUES (
+INSERT INTO module_meta (package, name, stamp) VALUES (
   SELECT rowid FROM package WHERE package.name = ?,
-  ?, ?, ?
+  ?, ?
 )
 |]
 
-insertModuleDependsListQ :: Query (ModuleId, ModuleStamp, ModuleHash) ()
+insertModuleDependsListQ :: Query (ModuleId, ModuleStamp) ()
 insertModuleDependsListQ = "TODO"
 
 insertModuleDependsQ :: Query (ModuleId, ModuleId) ()
@@ -132,10 +131,10 @@ insertPackageQ = "INSERT INTO package (name, path) VALUES (?, ?)"
 ----------------- GETS
 
 -- Get the dependency list meta (TODO rename this, maybe modulesignature?)
-getModuleDependsListQ :: Query ModuleId (ModuleStamp, ModuleHash)
-getModuleDependsListQ = "TODO"
+getModuleStampQ :: Query ModuleId (Only ModuleStamp)
+getModuleStampQ = "TODO"
 
--- Get dependencies of a module. Pairs them with hashes/timestamps
+-- Get dependencies of a module. Pairs them with timestamps
 getModuleDependsQ :: Query ModuleId (ModuleId, PackageRef, ModuleName)
 getModuleDependsQ = "TODO"
 
@@ -153,7 +152,7 @@ getPackageIdQ = "SELECT rowid, root FROM package WHERE name = ?"
 
 getPackageRecordQ
   :: Query (Only PackageId)
-       (PackageRef, PackageHash, ModuleName, FilePath, ModuleHash,
+       (PackageRef, PackageHash, ModuleName, FilePath,
         PackageRef, ModuleName)
 getPackageRecordQ = "SELECT * FROM package_dependency_record WHERE package_id = ?"
 
