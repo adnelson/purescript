@@ -2,26 +2,13 @@ module Language.PureScript.Build.Search where
 
 import Prelude.Compat
 
-import Debug.Trace
 import Control.Monad.Base (liftBase)
-import           Data.Maybe (fromMaybe)
-import           Data.String (fromString)
-import           Data.Time.Clock (UTCTime, getCurrentTime)
-import           Control.Monad
-import           Control.Monad.Error (MonadError, throwError)
-import           Control.Monad.Except (runExceptT)
-import           Control.Monad.Reader
-import           Control.Monad.Writer
-import           Control.Monad.State.Strict (StateT, modify, execStateT)
-import           Control.Concurrent.MVar.Lifted (MVar, newMVar, withMVar)
-import           Control.Monad.Trans.Control (MonadBaseControl(..))
-import qualified Data.Aeson as A
-import           Data.Bool (bool)
-import           Data.Char (isUpper)
-import qualified Data.ByteString.Lazy.UTF8 as LBU8
-import qualified Data.Map as M
+import Control.Monad (forM_, filterM)
+import Control.Monad.Except (MonadError)
+import Control.Monad.State.Strict (StateT, modify, execStateT)
+import Control.Monad.Trans.Control (MonadBaseControl(..))
+import Data.Char (isUpper)
 import qualified Data.Set as S
-import           Data.Text (Text)
 import qualified Data.Text as T
 import Language.PureScript.Names
 import Language.PureScript.Errors
@@ -29,13 +16,10 @@ import Language.PureScript.Build.Types
 
 import           System.FilePath ((</>), takeFileName, takeDirectory, takeBaseName, takeExtension)
 import qualified System.Directory as D
-import           System.Exit (exitSuccess, exitFailure)
-import           System.Directory (getCurrentDirectory)
-import           System.IO (hPutStrLn, stderr)
-import           System.IO.UTF8 (readUTF8FileT)
-import           Database.SQLite.Simple (Connection, Query, Only(..))
-import           Database.SQLite.Simple (query, query_, execute_, executeMany, open, execute)
-import           Database.SQLite.Simple.ToField (ToField(..))
+
+
+
+
 
 manifestFileName :: FilePath
 manifestFileName = "manifest.db"

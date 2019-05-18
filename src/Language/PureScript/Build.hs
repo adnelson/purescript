@@ -8,28 +8,21 @@
 module Language.PureScript.Build where
 
 import Prelude.Compat
-import Protolude (forM, forM_, ordNub)
+import Protolude (forM, ordNub)
 import System.FilePath ((</>))
 
 import Control.Concurrent.MVar.Lifted
 import Control.Concurrent.Async.Lifted
-import qualified Crypto.Hash.MD5 as MD5
 import qualified Data.ByteString.Char8 as B8
-import Data.Time.Clock (UTCTime)
-import Control.Monad.State.Strict
 import qualified System.Directory as D
--- import Data.Aeson (encode)
 
 import Database.SQLite.Simple (Connection, Only(..))
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as N
 import Data.List (foldl')
-import Data.Set (Set)
-import qualified Data.Set as S
 import Data.Map (Map)
 import Data.Maybe (catMaybes, mapMaybe)
 import qualified Data.Map as M
-import Control.Arrow ((***))
 import qualified Data.Text.Encoding as T
 import qualified Database.SQLite.Simple as SQLite
 import Control.Monad ((>=>))
@@ -73,11 +66,8 @@ data BuildConfig = BuildConfig {
 data BuildVars m = BuildVars {
   bvConfig :: BuildConfig,
   bvConn :: MVar SQLite.Connection,
-  bvPackageModules :: AsyncLoads m PackageRef PackageMeta,
+  bvPackageMetas :: AsyncLoads m PackageRef PackageMeta,
   -- ^ Cached modules contained in a package (unvalidated)..
-
-  bvPackageRecords :: AsyncLoads m PackageRef PackageRecord,
-  -- ^ Caches the full dependency tree of modules within a package.
 
   bvExternCompiles :: AsyncLoads m ResolvedModuleRef (ExternsFile, ModuleStamp),
   -- ^ Caches built modules.
@@ -152,8 +142,7 @@ compileModule externs modl = do
   -- desugar case declarations *after* type- and exhaustiveness checking
   -- since pattern guards introduces cases which the exhaustiveness checker
   -- reports as not-exhaustive.
-  (deguarded, nextVar') <- runSupplyT nextVar $ do
-    desugarCaseGuards elaborated
+  (deguarded, _) <- runSupplyT nextVar $ desugarCaseGuards elaborated
 
   let moduleName = getModuleName modl
   regrouped <- createBindingGroups moduleName . collapseBindingGroups $ deguarded
@@ -162,7 +151,7 @@ compileModule externs modl = do
       optimized = CF.optimizeCoreFn corefn
       [renamed] = renameInModules [optimized]
       exts = moduleToExternsFile mod' env'
-  ffiCodegen renamed
+  _ <- ffiCodegen renamed
   -- evalSupplyT nextVar' . codegen renamed env' . encode $ exts
   return exts
 
@@ -231,7 +220,7 @@ resolveModuleRef = curry $ loadAsync bvResolvedMods $ \(pref, ModuleRef mPkg nam
           refs -> do
             let pkgNames = flip mapMaybe refs $ \(ResolvedModuleRef _ p _) -> case p of
                   LocalPackage -> Nothing
-                  DepPackage p -> Just p
+                  DepPackage p' -> Just p'
             throwSimpleError $ AmbiguousModule name (ordNub pkgNames)
 
 -- | Get the path to a module which is known to exist.
@@ -250,7 +239,7 @@ getPackageMeta
   :: forall m. Build m
   => PackageRef
   -> m (AsyncLoad m PackageMeta)
-getPackageMeta = loadAsync bvPackageModules $ \pref -> do
+getPackageMeta = loadAsync bvPackageMetas $ \pref -> do
   res <- withConn (query getPackageIdQ (Only pref))
   case res of
     -- If we have a package ID the modules of that package have been discovered.
@@ -282,7 +271,7 @@ getPackageMeta = loadAsync bvPackageModules $ \pref -> do
 
           -- Construct the package record.
           pure $ PackageMeta root $ M.fromList namesAndIds
-        Precompiled manifestPath -> error "precompiled manifests not yet implemented"
+        Precompiled _manifestPath -> error "precompiled manifests not yet implemented"
 
 
 -- | Asynchronously load a module record.
@@ -291,10 +280,10 @@ getModuleRecord
   :: forall m. Build m => ModuleTrace -> ResolvedModuleRef -> m (AsyncLoad m ModuleRecord)
 getModuleRecord trace = loadAsync bvModuleRecords getRecord where
   getRecord :: ResolvedModuleRef -> m ModuleRecord
-  getRecord (r@(ResolvedModuleRef mId pref mname)) = case checkCycle r trace of
+  getRecord (r@(ResolvedModuleRef mId pref _)) = case checkCycle r trace of
     -- Cycle detection. TODO incorporate packages into trace
-    Just trace -> do
-      throwSimpleError $ CycleInModules (map (someModuleNamed . rmrModuleName) trace)
+    Just pkgs -> do
+      throwSimpleError $ CycleInModules (map (someModuleNamed . rmrModuleName) pkgs)
     Nothing -> do
       path <- getSourcePath r
       -- See if it's in the database; if so it will have a hash and timestamp.
@@ -326,7 +315,7 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
           let stamp = foldr (<>) latestStamp (mrStamp <$> depRecords)
           withConn $ \conn -> do
             execute insertModuleDependsListQ (mId, stamp) conn
-            let rows = flip map rmrefs $ \r -> (mId, rmrModuleId r)
+            let rows = flip map rmrefs $ \dep -> (mId, rmrModuleId dep)
             executeMany insertModuleDependsQ rows conn
 
           pure $ ModuleRecord path stamp rmrefs
@@ -366,7 +355,6 @@ buildResolvedModule
   :: forall m. Build m
   => ResolvedModuleRef -> m (AsyncLoad m (ExternsFile, ModuleStamp))
 buildResolvedModule = loadAsync bvExternCompiles $ \rmref -> do
-  let pref = rmrPackageRef rmref
   -- Get dependencies from the record and recur on them first.
   ModuleRecord path stamp depRefs <- getModuleRecord newTrace rmref >>= wait
   deps :: [(ExternsFile, ModuleStamp)] <- forConcurrently depRefs (buildResolvedModule >=> wait)
@@ -407,8 +395,8 @@ initBuild bvConfig@(BuildConfig {..}) = liftBase $ do
 
   -- Create mvars
   bvConn <- newMVar conn
-  bvPackageModules <- newMVar mempty
-  bvPackageRecords <- newMVar mempty
   bvExternCompiles <- newMVar mempty
   bvResolvedMods <- newMVar mempty
+  bvModuleRecords <- newMVar mempty
+  bvPackageMetas <- newMVar mempty
   pure BuildVars {..}
