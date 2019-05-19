@@ -11,6 +11,7 @@
 module Language.PureScript.Names where
 
 import Prelude.Compat
+import Data.String (IsString(..))
 
 import Database.SQLite.Simple.ToField (ToField(..))
 import Database.SQLite.Simple.FromField (FromField(..))
@@ -193,6 +194,8 @@ moduleNameFromString = ModuleName . splitProperNames
     s' -> ProperName w : splitProperNames s''
       where (w, s'') = T.break (== '.') s'
 
+instance IsString ModuleName where fromString = moduleNameFromString . T.pack
+
 isBuiltinModuleName :: ModuleName -> Bool
 isBuiltinModuleName (ModuleName (ProperName "Prim" : _)) = True
 isBuiltinModuleName _ = False
@@ -208,7 +211,10 @@ moduleNameToRelPath (ModuleName names) =
 
 -- | TODO: make a smart constructor for this
 newtype PackageName = PackageName { packageNameToText :: Text }
-  deriving (Show, Eq, Ord, Generic, NFData, ToField, FromField, ToJSON, FromJSON)
+  deriving (Show, Eq, Ord, Generic, NFData, ToJSON, FromJSON)
+
+instance ToField PackageName where toField (PackageName n) = toField n
+instance FromField PackageName where fromField f = PackageName <$> fromField f
 
 -- |
 -- A qualified name, i.e. a name with an optional module name
@@ -273,29 +279,3 @@ isQualifiedWith _ _ = False
 $(deriveJSON (defaultOptions { sumEncoding = ObjectWithSingleField }) ''Qualified)
 $(deriveJSON (defaultOptions { sumEncoding = ObjectWithSingleField }) ''Ident)
 $(deriveJSON (defaultOptions { sumEncoding = ObjectWithSingleField }) ''ModuleName)
-
--- | A reference to a module, possibly with a package name for disambiguation.
-data ModuleRef = ModuleRef {
-  mrPackage :: Maybe PackageName,
-  mrName :: ModuleName
-  } deriving (Show, Eq, Ord, Generic, NFData)
-
-instance ToJSON ModuleRef where
-  toJSON (ModuleRef Nothing name) = toJSON name
-  toJSON (ModuleRef (Just pkg) name) = object ["package" .= pkg, "name" .= name]
-
-instance FromJSON ModuleRef where
-  parseJSON = \case
-    s@(String _) -> someModuleNamed <$> parseJSON s
-    val -> flip (withObject "qualified module reference") val $ \o -> do
-      ModuleRef <$> (o .: "package") <*> (o .: "name")
-
-someModuleNamed :: ModuleName -> ModuleRef
-someModuleNamed = ModuleRef Nothing
-
--- | Convert a module reference to text.
---
--- This should only be used for user-facing purposes (logging, errors etc).
-moduleRefToText :: ModuleRef -> Text
-moduleRefToText (ModuleRef Nothing name) = runModuleName name
-moduleRefToText (ModuleRef (Just pkg) name) = mconcat [packageNameToText pkg, ".", runModuleName name]

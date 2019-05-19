@@ -13,13 +13,17 @@ import qualified Database.SQLite.Simple as SQLite
 import Language.PureScript.Names
 import Language.PureScript.Build.Types
 
+-- | Name of the file to use for the manifest SQLite database.
+manifestFileName :: FilePath
+manifestFileName = "ps-manifest.db"
+
 -- | Attach a phantom type to a query to know what it takes and returns
 newtype Query input output = Query {unQuery :: SQLite.Query}
   deriving (Show, Eq, IsString)
 
 createPackageTableQ :: Query () ()
 createPackageTableQ = fromString [r|
-CREATE TABLE package (
+CREATE TABLE IF NOT EXISTS package (
   -- Name of the package. An empty string refers to the current package.
   name TEXT NOT NULL UNIQUE,
   -- TODO other table. Package signature, made of the hashes of all its modules.
@@ -31,39 +35,39 @@ CREATE TABLE package (
 
 createModuleMetaTableQ :: Query () ()
 createModuleMetaTableQ =  fromString [r|
-CREATE TABLE module_meta (
+CREATE TABLE IF NOT EXISTS module (
+  package INT NOT NULL, -- modules must belong to a package
   name TEXT NOT NULL,
   -- Path is null if there's no source code available
   path TEXT UNIQUE,
-  timestamp TEXT -- timestamp at time of hash (null if not yet loaded)
+  timestamp TEXT, -- timestamp at time of hash (null if not yet loaded)
+  FOREIGN KEY (package) REFERENCES package(rowid)
 );
 |]
 
 createModuleDependsTableQ :: Query () ()
 createModuleDependsTableQ = fromString [r|
-CREATE TABLE module_depends (
-  module_meta INT NOT NULL,
+CREATE TABLE IF NOT EXISTS module_depends (
+  module INT NOT NULL,
   depends INT NOT NULL,
-  FOREIGN KEY (module_meta) REFERENCES module_meta(rowid) ON DELETE CASCADE,
-  FOREIGN KEY (depends) REFERENCES module_meta(rowid) ON DELETE CASCADE,
-  UNIQUE (module_meta, depends)
+  FOREIGN KEY (module) REFERENCES module(rowid) ON DELETE CASCADE,
+  FOREIGN KEY (depends) REFERENCES module(rowid) ON DELETE CASCADE,
+  UNIQUE (module, depends)
 );
 |]
 
-createPackageModuleMetaTableQ :: Query () ()
-createPackageModuleMetaTableQ = fromString [r|
-CREATE TABLE package_module_meta (
-  package INT NOT NULL,
-  module_meta INT NOT NULL,
-  FOREIGN KEY (package) REFERENCES package(rowid) ON DELETE CASCADE,
-  FOREIGN KEY (module_meta) REFERENCES module_meta(rowid) ON DELETE CASCADE,
-  UNIQUE (package, module_meta)
-);
+createModuleDependsViewQ :: Query () ()
+createModuleDependsViewQ = fromString [r|
+CREATE VIEW IF NOT EXISTS module_depends_view
+AS SELECT module as mod_id, dep_mod.rowid, dep_pkg.name, dep_mod.name
+FROM module_depends
+INNER JOIN module as dep_mod ON depends = dep_mod.rowid
+INNER JOIN package as dep_pkg ON dep_mod.package = dep_pkg.rowid
 |]
 
 createPackageRecordViewQ :: Query () ()
 createPackageRecordViewQ = fromString [r|
-CREATE VIEW package_dependency_record
+CREATE VIEW IF NOT EXISTS package_dependency_record
 AS SELECT
   package.name as package_name,
   package.hash,
@@ -76,76 +80,73 @@ FROM
 -- Start with packages
 package
 -- Add modules of those packages
-INNER JOIN package_module_meta AS pmm ON pmm.package = package.rowid
+INNER JOIN package_module AS pmm ON pmm.package = package.rowid
 -- Add metadata of those modules
-INNER JOIN module_meta AS mm1 ON pmm.module_meta = mm1.rowid
+INNER JOIN module AS mm1 ON pmm.module = mm1.rowid
 -- Add module dependencies
-INNER JOIN module_depends ON module_depends.module_meta = mm1.rowid
+INNER JOIN module_depends ON module_depends.module = mm1.rowid
 -- Resolve names of module dependencies
-INNER JOIN module_meta AS mm2 ON module_depends.depends = mm2.rowid
+INNER JOIN module AS mm2 ON module_depends.depends = mm2.rowid
 -- Resolve package names of module dependencies
-INNER JOIN package_module_meta AS pmm2 ON pmm2.module_meta = mm2.rowid
+INNER JOIN package_module AS pmm2 ON pmm2.module = mm2.rowid
 INNER JOIN package AS dep_pkg ON pmm2.package = dep_pkg.rowid
 |]
 
 createModulePathHashViewQ :: Query () ()
 createModulePathHashViewQ = fromString [r|
-CREATE VIEW module_full_meta
+CREATE VIEW IF NOT EXISTS module_full_meta
 AS SELECT
-  module_meta.rowid as module_id,
+  module.rowid as module_id,
   package.name as package_name,
-  module_meta.path as path,
-  module_meta.timestamp as module_stamp
-FROM module_meta
-INNER JOIN package_module_meta AS pmm ON pmm.module_meta = module_meta.rowid
+  module.path as path,
+  module.timestamp as module_stamp
+FROM module
+INNER JOIN package_module AS pmm ON pmm.module = module.rowid
 INNER JOIN package ON pmm.package = package.rowid;
 |];
 
 ----------------- INSERTS
 
 
-insertModuleQ :: Query (PackageRef, ModuleName, ModuleStamp) ()
+insertModuleQ :: Query (PackageRef, ModuleName) ()
 insertModuleQ = fromString [r|
-INSERT INTO module_meta (package, name, stamp) VALUES (
-  SELECT rowid FROM package WHERE package.name = ?,
-  ?, ?
-)
-|]
-
-insertModuleDependsListQ :: Query (ModuleId, ModuleStamp) ()
-insertModuleDependsListQ = "TODO"
-
-insertModuleDependsQ :: Query (ModuleId, ModuleId) ()
-insertModuleDependsQ = fromString [r|
-INSERT INTO module_depends (module_dep_list, depends) VALUES (
-  SELECT rowid FROM module_deps_lists WHERE module_meta = ?,
+INSERT INTO module (package, name) VALUES (
+  (SELECT rowid FROM package WHERE package.name = ?),
   ?
 )
 |]
 
-insertPackageQ :: Query (PackageRef, FilePath) ()
-insertPackageQ = "INSERT INTO package (name, path) VALUES (?, ?)"
+insertModuleStampQ :: Query (ModuleStamp, ModuleId) ()
+insertModuleStampQ = "UPDATE module SET timestamp = ? WHERE rowid = ?"
 
+insertModuleDependsQ :: Query (ModuleId, ModuleId) ()
+insertModuleDependsQ = "INSERT INTO module_depends (module, depends) VALUES (?, ?)"
+
+insertPackageQ :: Query (PackageRef, FilePath) ()
+insertPackageQ = "INSERT INTO package (name, root) VALUES (?, ?)"
 
 
 ----------------- GETS
 
 -- Get the dependency list meta (TODO rename this, maybe modulesignature?)
-getModuleStampQ :: Query ModuleId (Only ModuleStamp)
-getModuleStampQ = "TODO"
+getModuleStampQ :: Query ModuleId (Only (Maybe ModuleStamp))
+getModuleStampQ = "SELECT timestamp FROM module WHERE rowid = ?"
 
--- Get dependencies of a module. Pairs them with timestamps
+-- Get dependencies of a module (enough to construct a ResolvedModuleRef)
 getModuleDependsQ :: Query ModuleId (ModuleId, PackageRef, ModuleName)
-getModuleDependsQ = "TODO"
+getModuleDependsQ = "SELECT * FROM module_depends_view WHERE mod_id = ?"
 
 getPackageModulesFromIdQ :: Query PackageId (ModuleName, ModuleId)
-getPackageModulesFromIdQ = "TODO"
+getPackageModulesFromIdQ = "TODO getPackageModulesFromIdQ"
 
 getPackageModulesQ :: Query (Only PackageRef) (ModuleName, ModuleId)
-getPackageModulesQ = "TODO"
+getPackageModulesQ = fromString [r|
+SELECT name, rowid FROM module
+WHERE package = (SELECT rowid FROM package WHERE name = ?)
+|]
 
 getPackageRootQ :: Query PackageId (Only FilePath)
-getPackageRootQ = "TODO"
+getPackageRootQ = "TODO getPackageRootQ"
 
 getPackageIdQ :: Query (Only PackageRef) (PackageId, FilePath)
 getPackageIdQ = "SELECT rowid, root FROM package WHERE name = ?"

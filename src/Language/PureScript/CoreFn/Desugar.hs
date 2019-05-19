@@ -12,6 +12,7 @@ import Data.Tuple (swap)
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as M
 
+import Language.PureScript.AST.Declarations (ModuleRef(..))
 import Language.PureScript.AST.Literals
 import Language.PureScript.AST.SourcePos
 import Language.PureScript.AST.Traversals

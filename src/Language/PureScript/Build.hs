@@ -5,20 +5,25 @@
 -- module. A build results in a unique hash, which is used to skip
 -- unnecessary work.
 --
-module Language.PureScript.Build where
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+module Language.PureScript.Build (
+  module Language.PureScript.Build,
+  module Language.PureScript.Build.Types,
+  module Language.PureScript.Build.Monad,
+  module Language.PureScript.Build.Manifest
+  ) where
 
 import Prelude.Compat
-import Protolude (forM, ordNub)
+import Protolude (forM, ordNub, whenM)
 import System.FilePath ((</>))
-
-import Control.Concurrent.MVar.Lifted
+import Debug.Trace (traceM)
 import Control.Concurrent.Async.Lifted
+import Control.Concurrent.MVar.Lifted
 import qualified Data.ByteString.Char8 as B8
 import qualified System.Directory as D
 
 import Database.SQLite.Simple (Connection, Only(..))
 import Data.List.NonEmpty (NonEmpty)
-import qualified Data.List.NonEmpty as N
 import Data.List (foldl')
 import Data.Map (Map)
 import Data.Maybe (catMaybes, mapMaybe)
@@ -29,14 +34,12 @@ import Control.Monad ((>=>))
 import Control.Monad.Base
 import Control.Monad.Supply
 import Control.Monad.Trans.Control (MonadBaseControl(..))
-import Control.Monad.Error.Class (MonadError(..))
-import Control.Monad.Writer.Class (MonadWriter(..))
 import Control.Monad.Reader.Class (MonadReader(..), asks)
 
-
+import Language.PureScript.Constants (isPrim)
 import Language.PureScript.Names
 import Language.PureScript.AST
-import Language.PureScript.Errors (MultipleErrors, throwSimpleError)
+import Language.PureScript.Errors (throwSimpleError)
 import qualified Language.PureScript.CoreFn as CF
 import Language.PureScript.Environment
 import Language.PureScript.Externs
@@ -48,59 +51,10 @@ import Language.PureScript.TypeChecker
 import Language.PureScript.Build.Search
 import Language.PureScript.Build.Manifest
 import Language.PureScript.Build.Types
-
-type AsyncLoad m a = Async (StM m a)
-type AsyncLoads m k a = MVar (Map k (AsyncLoad m a))
-
-data BuildConfig = BuildConfig {
-  bcDependentPackages :: [PackageName],
-  bcPackageLocations :: [FilePath],
-  bcLocalSourceDirectory :: FilePath,
-  bcEntryPoints :: NonEmpty ModuleName,
-  bcOutput :: FilePath
-  } deriving (Show, Eq)
+import Language.PureScript.Build.Monad
 
 -- instance ToJSON BuildConfig where toJSON = genericToJSON defaultOptions
 -- instance FromJSON BuildConfig where parseJSON = genericParseJSON defaultOptions
-
-data BuildVars m = BuildVars {
-  bvConfig :: BuildConfig,
-  bvConn :: MVar SQLite.Connection,
-  bvPackageMetas :: AsyncLoads m PackageRef PackageMeta,
-  -- ^ Cached modules contained in a package (unvalidated)..
-
-  bvExternCompiles :: AsyncLoads m ResolvedModuleRef (ExternsFile, ModuleStamp),
-  -- ^ Caches built modules.
-
-  bvResolvedMods :: AsyncLoads m (PackageRef, ModuleRef) ResolvedModuleRef,
-  -- ^ Caches module resolution.
-
-  bvModuleRecords :: AsyncLoads m ResolvedModuleRef ModuleRecord
-
---  bvPackagePaths :: AsyncLoads m PackageName FilePath,
---  bvModules :: AsyncLoads m ModuleRef (ResolvedModuleRef, FilePath),
---  bvModulePaths :: AsyncLoads m ResolvedModuleRef FilePath,
---  bvModuleRefs :: AsyncLoads m ResolvedModuleRef (Set ResolvedModuleRef, ModuleStamp),
-  }
-
-type Build m = (MonadBaseControl IO m, MonadReader (BuildVars m) m,
-                MonadError MultipleErrors m, MonadWriter MultipleErrors m)
-
-loadAsync
-  :: forall m k a. (Ord k, Build m)
-  => (BuildVars m -> AsyncLoads m k a)
-  -> (k -> m a)
-  -> k
-  -> m (AsyncLoad m a)
-loadAsync getMVars fromScratch key = do
-  mv <- asks getMVars
-  modifyMVar mv $ \(asyncs :: Map k (AsyncLoad m a)) -> case M.lookup key asyncs of
-    -- If there's already a job going, wait for it to complete,
-    -- then cache the result.
-    Just asy -> pure (asyncs, asy)
-    Nothing -> do
-      asy <- async $ fromScratch key
-      pure (M.insert key asy asyncs, asy)
 
 -- | Acquire the connnection to the database and use it in an action.
 withConn :: Build m => (SQLite.Connection -> m a) -> m a
@@ -192,36 +146,40 @@ parseModuleImports path source = getModuleImports <$> parseModule path source
 resolveModuleRef
   :: forall m. Build m
   => PackageRef -> ModuleRef -> m (AsyncLoad m ResolvedModuleRef)
-resolveModuleRef = curry $ loadAsync bvResolvedMods $ \(pref, ModuleRef mPkg name) -> case mPkg of
-  Just pname -> do
-    -- We don't need to use the information here; just make sure that it loaded successfully
-    PackageMeta _ mods <- getPackageMeta (DepPackage pname) >>= wait
-    case M.lookup name mods of
-      Nothing -> throwSimpleError $ ModuleNotFoundInPackage pname name
-      Just mId -> pure $ ResolvedModuleRef mId (DepPackage pname) name
-  Nothing -> do
-    -- First, attempt to load the module from the same package.
-    pkgModules <- fmap pmModules $ getPackageMeta pref >>= wait
-    case M.lookup name pkgModules of
-      Just mid -> pure $ ResolvedModuleRef mid pref name
-      Nothing -> do
-        -- It wasn't found in the package. Load other packages, then
-        -- check if there's an unambiguous module with that name.
-        depNames <- asks (bcDependentPackages . bvConfig)
-        let packages = filter (/= pref) $ LocalPackage : map DepPackage depNames
-        fromOtherPackages <- forConcurrently packages $ \pref' -> do
-          PackageMeta _ mods <- getPackageMeta pref' >>= wait
-          pure $ do
-            modId <- M.lookup name mods
-            pure $ ResolvedModuleRef modId pref' name
-        case catMaybes fromOtherPackages of
-          [result] -> pure result
-          [] -> throwSimpleError $ ModuleNotFound name
-          refs -> do
-            let pkgNames = flip mapMaybe refs $ \(ResolvedModuleRef _ p _) -> case p of
-                  LocalPackage -> Nothing
-                  DepPackage p' -> Just p'
-            throwSimpleError $ AmbiguousModule name (ordNub pkgNames)
+resolveModuleRef = curry $ loadAsync bvResolvedMods $ \(pref, mr@(ModuleRef mPkg name)) -> do
+  traceM $ "Resolving module ref " <> prettyModuleRef mr
+  case mPkg of
+    Just pname -> do
+      traceM $ prettyModuleRef mr <> " has a specific package reference"
+      -- We don't need to use the information here; just make sure that it loaded successfully
+      PackageMeta _ mods <- getPackageMeta (DepPackage pname) >>= wait
+      case M.lookup name mods of
+        Nothing -> throwSimpleError $ ModuleNotFoundInPackage pname name
+        Just mId -> pure $ ResolvedModuleRef mId (DepPackage pname) name
+    Nothing -> do
+      -- First, attempt to load the module from the same package.
+      pkgModules <- fmap pmModules $ getPackageMeta pref >>= wait
+      case M.lookup name pkgModules of
+        Just mid -> pure $ ResolvedModuleRef mid pref name
+        Nothing -> do
+          traceM $ prettyModuleRef mr <> " was not found in " <> prettyPackageRef pref
+          -- It wasn't found in the package. Load other packages, then
+          -- check if there's an unambiguous module with that name.
+          depNames <- asks (bcDependentPackages . bvConfig)
+          let packages = filter (/= pref) $ LocalPackage : map DepPackage depNames
+          fromOtherPackages <- forConcurrently packages $ \pref' -> do
+            PackageMeta _ mods <- getPackageMeta pref' >>= wait
+            pure $ do
+              modId <- M.lookup name mods
+              pure $ ResolvedModuleRef modId pref' name
+          case catMaybes fromOtherPackages of
+            [result] -> pure result
+            [] -> throwSimpleError (ModuleNotFound name)
+            refs -> do
+              let pkgNames = flip mapMaybe refs $ \(ResolvedModuleRef _ p _) -> case p of
+                    LocalPackage -> Nothing
+                    DepPackage p' -> Just p'
+              throwSimpleError $ AmbiguousModule name (ordNub pkgNames)
 
 -- | Get the path to a module which is known to exist.
 getSourcePath :: Build m => ResolvedModuleRef -> m FilePath
@@ -250,28 +208,41 @@ getPackageMeta = loadAsync bvPackageMetas $ \pref -> do
 
     -- If we don't have that package, we have to load it.
     _ -> do
-      -- s <- ask
-      let locations :: [FilePath] = undefined -- <- bcPackageLocations . bvConfig <$> ask
-      discoverPackage pref locations >>= \case
-        Uncompiled (ModulesAndRoot root modNames) -> do
-          -- Load each module in the db. Since this is the first time
-          -- reading them, we record the stamp with no comparison.
-          stamps <- forConcurrently modNames $ \n -> do
-            let path = root </> moduleNameToRelPath n
-            stamp <- liftBase $ readStamp path
-            pure (n, stamp)
+      let loadModules (ModulesAndRoot root modNames) = do
+            traceM $ "Loading modules from " <> root
+            -- Load each module in the db. Since this is the first time
+            -- reading them, we record the stamp with no comparison.
+            -- stamps <- forConcurrently modNames $ \n -> do
+            --   traceM $ "Getting stamp for module " <> renderModuleName n
+            --   let path = root </> moduleNameToRelPath n
+            --   stamp <- liftBase $ readStamp path
+            --   pure (n, stamp)
 
-          -- Once modules are loaded, we can put them in the database.
-          namesAndIds <- withConn $ \conn -> do
-            execute insertPackageQ (pref, root) conn
-            let rows = map (\(n, s) -> (pref, n, s)) stamps
-            executeMany insertModuleQ rows conn
-            -- As a last step grab all of the newly inserted rows
-            query getPackageModulesQ (Only pref) conn
+            -- Once modules are loaded, we can put them in the database.
+            namesAndIds <- withConn $ \conn -> do
+              traceM $ "Inserting package " <> show (pref, root)
+              execute insertPackageQ (pref, root) conn
+              let rows = map (pref,) modNames
+              traceM $ "Inserting modules " <> show (map renderModuleName modNames)
+              executeMany insertModuleQ rows conn
+              -- As a last step grab all of the newly inserted rows
+              query getPackageModulesQ (Only pref) conn
 
-          -- Construct the package record.
-          pure $ PackageMeta root $ M.fromList namesAndIds
-        Precompiled _manifestPath -> error "precompiled manifests not yet implemented"
+            -- Construct the package record.
+            pure $ PackageMeta root $ M.fromList namesAndIds
+      case pref of
+        LocalPackage -> do
+          traceM $ "Loading local modules"
+          src <- bcLocalSourceDirectory . bvConfig <$> ask
+          localModNames <- liftBase $ findModulesIn src
+          traceM $ "Found these modules: " <> show (map renderModuleName localModNames)
+          loadModules (ModulesAndRoot src localModNames)
+        DepPackage pname -> do
+          traceM $ "Loading modules of " <> show pname
+          locations :: [FilePath] <- bcPackageLocations . bvConfig <$> ask
+          discoverPackage pname locations >>= \case
+            Uncompiled modsAndRoot -> loadModules modsAndRoot
+            Precompiled _manifestPath -> error "precompiled manifests not yet implemented"
 
 
 -- | Asynchronously load a module record.
@@ -287,8 +258,9 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
     Nothing -> do
       path <- getSourcePath r
       -- See if it's in the database; if so it will have a hash and timestamp.
-      (withConn (query getModuleStampQ mId) :: m [Only ModuleStamp]) >>= \case
-        (Only mstamp):_ -> do
+      (withConn (query getModuleStampQ mId) :: m [Only (Maybe ModuleStamp)]) >>= \case
+        (Only (Just mstamp)):_ -> do
+          traceM $ "Found timestamp " <> show mstamp <> " for " <> show r
           -- There's an entry in the database. But is it up-to-date? First check the timestamp.
           (latestStamp, maybeSource) <- liftBase $ refreshStamp mstamp path
           depRefs :: Either [ModuleRef] [ResolvedModuleRef] <- case maybeSource of
@@ -299,6 +271,8 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
               rows <- withConn (query getModuleDependsQ mId)
               pure $ flip map rows $ \(rmrModuleId, rmrPackageRef, rmrModuleName) -> do
                 ResolvedModuleRef {..}
+
+          traceM $ "Dependency refs: " <> show depRefs
 
           rmrefs <- case depRefs of
             -- Already resolved: return as-is
@@ -314,18 +288,21 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
           -- Compute the hash off of dependencies
           let stamp = foldr (<>) latestStamp (mrStamp <$> depRecords)
           withConn $ \conn -> do
-            execute insertModuleDependsListQ (mId, stamp) conn
+            execute insertModuleStampQ (stamp, mId) conn
             let rows = flip map rmrefs $ \dep -> (mId, rmrModuleId dep)
             executeMany insertModuleDependsQ rows conn
 
           pure $ ModuleRecord path stamp rmrefs
 
-        [] -> do
+        _ -> do
+          traceM $ "Recording dependencies of " <> renderRMR r
           -- No dependencies recorded in the database.
           stamp <- liftBase $ readStamp path
           source <- liftBase $ B8.readFile path
-          unresolvedImports <- parseModuleImports path source
-          resolvedImportAsyncs <- forConcurrently unresolvedImports $ \mref -> do
+          imports <- parseModuleImports path source
+          let importsWithoutPrims = filter (not . isPrim . mrName) imports
+          resolvedImportAsyncs <- forConcurrently importsWithoutPrims $ \mref -> do
+            traceM $ "Resolving " <> renderRMR r <> " => " <> prettyModuleRef mref
             -- Note that we're passing in the package ref of *this* module; i.e. the one
             -- currently being loaded. By adding this info we can unambiguously determine which
             -- package/module combo is the correct answer for this package.
@@ -333,6 +310,7 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
               resolveModuleRef (rmrPackageRef r) mref >>= wait
             (rmref,) <$> getModuleRecord (pushTrace r trace) rmref
 
+          traceM $ "2"
           depInfos :: [(ResolvedModuleRef, ModuleRecord)] <- do
             forM resolvedImportAsyncs $ \(rmref, a) -> do
               recd :: ModuleRecord <- wait a
@@ -341,9 +319,10 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
           let depStamps = map (mrStamp . snd) depInfos
           let stamp' = foldr (<>) stamp depStamps
 
+          traceM $ "3"
           withConn $ \conn -> do
             -- Create a module dependency list
-            execute insertModuleDependsListQ (mId, stamp') conn
+            execute insertModuleStampQ (stamp', mId) conn
             let depIds = map (rmrModuleId . fst) depInfos
             executeMany insertModuleDependsQ ((mId,) <$> depIds) conn
 
@@ -370,27 +349,33 @@ buildResolvedModule = loadAsync bvExternCompiles $ \rmref -> do
       externs <- compileModule (map fst deps) modl
       (externs, stamp) <$ cacheBuildInDatabase rmref (CachedBuild externs stamp)
 
+resolveEntryPoints :: forall m. Build m => m (NonEmpty (AsyncLoad m ResolvedModuleRef))
+resolveEntryPoints = do
+  entryPoints <- bcEntryPoints . bvConfig <$> ask
+  forM entryPoints $ \modName -> do
+    resolveModuleRef LocalPackage (ModuleRef Nothing modName)
 
-cfg :: BuildConfig
-cfg = BuildConfig {
-  bcDependentPackages = [PackageName "purescript-prelude"],
-  bcPackageLocations = ["thetest/js/bower_components"],
-  bcLocalSourceDirectory = "thetest/input",
-  bcOutput = "thetest/output2",
-  bcEntryPoints = ModuleName [ProperName "Test"] N.:| []
-  }
-
+resolveEntryPointDeps
+  :: forall m. Build m => m (NonEmpty (ResolvedModuleRef, ModuleRecord))
+resolveEntryPointDeps = do
+  entryPoints <- bcEntryPoints . bvConfig <$> ask
+  forM entryPoints $ \modName -> do
+    rmref <- resolveModuleRef LocalPackage (ModuleRef Nothing modName) >>= wait
+    record :: ModuleRecord <- getModuleRecord newTrace rmref >>= wait
+    pure (rmref, record)
 
 -- Create the build directory and the initial manifest DB.
-initBuild :: MonadBaseControl IO m => BuildConfig -> m (BuildVars m)
+initBuild :: MonadBaseControl IO m => BuildConfig -> m (BuildVars (Builder m))
 initBuild bvConfig@(BuildConfig {..}) = liftBase $ do
   D.createDirectoryIfMissing True bcOutput
-  conn <- SQLite.open (bcOutput </> "manifest.db")
+  -- TEMP
+  whenM (D.doesFileExist (bcOutput </> manifestFileName)) $
+    D.removeFile (bcOutput </> manifestFileName)
+  conn <- SQLite.open (bcOutput </> manifestFileName)
   -- Create tables
   let execute_ (Query q) = SQLite.execute_ conn q
   mapM_ execute_ [createPackageTableQ, createModuleMetaTableQ,
-                  createModuleDependsTableQ,
-                  createPackageModuleMetaTableQ,
+                  createModuleDependsTableQ, createModuleDependsViewQ,
                   createPackageRecordViewQ, createModulePathHashViewQ]
 
   -- Create mvars

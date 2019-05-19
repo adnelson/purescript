@@ -1,8 +1,10 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DeriveGeneric #-}
 module Language.PureScript.Build.Types where
 
 import Prelude.Compat
 
+import Data.Aeson
 import Control.Concurrent.MVar.Lifted
 import Control.Concurrent.Async.Lifted
 import Data.List.NonEmpty (NonEmpty)
@@ -15,12 +17,14 @@ import qualified Data.ByteString.Char8 as B8
 import Data.Map (Map)
 import Data.Set (Set)
 import qualified Data.Set as S
+import qualified Data.Text as T
 import Control.Monad.Trans.Control (MonadBaseControl(..))
 import Control.Monad.Error.Class (MonadError(..))
 import Control.Monad.Writer.Class (MonadWriter(..))
 import Control.Monad.Reader.Class (MonadReader(..), asks)
 import qualified Crypto.Hash.MD5 as MD5
 import qualified System.Directory as D
+import GHC.Generics
 
 import Language.PureScript.Names
 import Language.PureScript.Errors
@@ -31,12 +35,16 @@ data PackageRef
   | DepPackage !PackageName
   deriving (Show, Eq, Ord)
 
+prettyPackageRef :: PackageRef -> String
+prettyPackageRef LocalPackage = "<<local package>>"
+prettyPackageRef (DepPackage (PackageName n)) = T.unpack n
+
 instance ToRow PackageRef where
   toRow = toRow . Only
 
 instance ToField PackageRef where
   toField = \case
-    LocalPackage -> toField ("" :: String)
+    LocalPackage -> toField ("/LOCAL/" :: String)
     DepPackage pname -> toField pname
 
 instance FromField PackageRef where
@@ -49,25 +57,31 @@ data CachedBuild = CachedBuild {
   cbStamp :: !(Stamp 'Mod)
   } deriving (Show)
 
--- | Distinct from the normal moduleref type, which can refer to either a
--- module within a particular package, or just "some module with this
--- name". This one always refers to one or the other category of
--- module. It will only be instantiated if the module was discovered on disk.
+-- | Refers to a module which has been discovered by the package manager.
+-- Can be considered "proof" that the given module exists.
 data ResolvedModuleRef = ResolvedModuleRef {
-  rmrModuleId :: !ModuleId,
+  rmrModuleId :: !ModuleId, -- ID in the
   rmrPackageRef :: !PackageRef,
   rmrModuleName :: !ModuleName
   } deriving (Show, Eq, Ord)
 
-instance ToRow ResolvedModuleRef where
-  toRow (ResolvedModuleRef _ pr mname) = case pr of
-    LocalPackage -> toRow ("" :: String, mname)
-    DepPackage pname -> toRow (pname, mname)
+instance ToJSON ResolvedModuleRef where
+  toJSON (ResolvedModuleRef mid LocalPackage mname) = object [
+    "name" .= renderModuleName mname,
+    "id" .= mid
+    ]
+  toJSON (ResolvedModuleRef mid (DepPackage (PackageName p)) mname) = object [
+    "package" .= p,
+    "name" .= renderModuleName mname,
+    "id" .= mid
+    ]
 
--- instance ToRow ResolvedModuleRef where
---   toRow = \case
---     LocalModule mname -> toRow ("" :: String, mname)
---     DepModule pname mname -> toRow (pname, mname)
+renderRMR :: ResolvedModuleRef -> String
+renderRMR (ResolvedModuleRef _ LocalPackage mn) = renderModuleName mn
+renderRMR (ResolvedModuleRef _ p mn) = prefix <> renderModuleName mn where
+  prefix = case p of
+    LocalPackage -> ""
+    DepPackage (PackageName p') -> T.unpack p' <> "."
 
 type PrecompiledRecord = (ModuleName, ExternsFile, Hash 'Mod)
 
@@ -84,15 +98,15 @@ data HasId
   | ModHasId
   | ModDepListHasId
 
-type PackageId = CanonId 'PkgHasId
-type ModuleId = CanonId 'ModHasId
-type ModuleDepListId = CanonId 'ModDepListHasId
+type PackageId = Id 'PkgHasId
+type ModuleId = Id 'ModHasId
+type ModuleDepListId = Id 'ModDepListHasId
 
-newtype CanonId (a :: HasId) =CanonId {cId :: Int}
-  deriving (Show, Eq, Ord, FromField, ToField)
+newtype Id (a :: HasId) = Id Int
+  deriving (Show, Eq, Ord, FromField, ToField, ToJSON, FromJSON)
 
-instance ToRow (CanonId a) where toRow = toRow . Only
-instance FromRow (CanonId a) where fromRow = fromOnly <$> fromRow
+instance ToRow (Id a) where toRow = toRow . Only
+instance FromRow (Id a) where fromRow = fromOnly <$> fromRow
 
 -- | Kinds of things that can be hashed/timestamped/etc
 data ObjType = Pkg | Mod
@@ -103,7 +117,7 @@ newtype Hash (a :: ObjType) = Hash { unHash :: B8.ByteString }
 type PackageHash = Hash 'Pkg
 
 newtype Stamp (a :: ObjType) = Stamp {tStamp :: UTCTime}
-  deriving (Show, Eq, Ord, FromField, ToField)
+  deriving (Show, Eq, Ord, FromField, ToField, ToJSON, FromJSON)
 instance Semigroup (Stamp a) where (<>) = max
 
 type ModuleStamp = Stamp 'Mod
@@ -139,7 +153,9 @@ data ModuleRecord = ModuleRecord {
   mrPath :: FilePath,
   mrStamp :: !(Stamp 'Mod),
   mrDeps :: [ResolvedModuleRef]
-  }
+  } deriving (Generic)
+
+instance ToJSON ModuleRecord
 
 data PackageRecord = PackageRecord (Stamp 'Pkg) (Map ModuleName ModuleRecord)
 

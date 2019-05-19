@@ -29,6 +29,7 @@ import           Control.Monad.Writer.Strict (Writer(), runWriter)
 
 import qualified Language.PureScript as P
 import qualified Language.PureScript.Names as N
+import qualified Language.PureScript.AST as AST
 import qualified Language.PureScript.Constants as C
 
 import           Language.PureScript.Interactive.Completion   as Interactive
@@ -197,7 +198,7 @@ handleShowImportedModules print' = do
   print' $ showModules importedModules
   where
   showModules = unlines . sort . map (T.unpack . showModule)
-  showModule (N.ModuleRef mPkg mn, declType, asQ) = do
+  showModule (AST.ModuleRef mPkg mn, declType, asQ) = do
     let packageQualifier = maybe "" (\(N.PackageName p) -> T.pack (show p) <> " ") mPkg
         importStr = "import " <> packageQualifier <> N.runModuleName mn
     importStr <> showDeclType declType <>
@@ -326,7 +327,7 @@ handleBrowse print' moduleName = do
            else Nothing
 
     failNotInEnv modName = print' $ T.unpack $ "Module '" <> N.runModuleName modName <> "' is not valid."
-    getModName (N.ModuleRef _ n, _, _) = n
+    getModName (AST.ModuleRef _ n, _, _) = n
     lookupUnQualifiedModName needle imports =
         getModName <$> find (\(_,_,mayQuaName) -> mayQuaName == Just needle) imports
 

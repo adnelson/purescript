@@ -7,18 +7,23 @@
 -- |
 -- Data types for modules and declarations
 --
-module Language.PureScript.AST.Declarations where
+module Language.PureScript.AST.Declarations (
+  module Language.PureScript.Names,
+  module Language.PureScript.AST.Declarations
+  ) where
 
 import Prelude.Compat
 
 import Control.DeepSeq (NFData)
 import Control.Monad.Identity
 
+import Data.Aeson
 import Data.Aeson.TH
 import qualified Data.Map as M
 import Data.Maybe (mapMaybe)
 import Data.Set (Set)
 import Data.Text (Text)
+import qualified Data.Text as T
 import qualified Data.List.NonEmpty as NEL
 import GHC.Generics (Generic)
 
@@ -38,6 +43,37 @@ import qualified Language.PureScript.Bundle as Bundle
 import qualified Language.PureScript.Constants as C
 
 import qualified Text.Parsec as P
+
+
+-- | A reference to a module, possibly with a package name for disambiguation.
+data ModuleRef = ModuleRef {
+  mrPackage :: Maybe PackageName,
+  mrName :: ModuleName
+  } deriving (Show, Eq, Ord, Generic, NFData)
+
+instance ToJSON ModuleRef where
+  toJSON (ModuleRef Nothing name) = toJSON name
+  toJSON (ModuleRef (Just pkg) name) = object ["package" .= pkg, "name" .= name]
+
+instance FromJSON ModuleRef where
+  parseJSON = \case
+    s@(String _) -> someModuleNamed <$> parseJSON s
+    val -> flip (withObject "qualified module reference") val $ \o -> do
+      ModuleRef <$> (o .: "package") <*> (o .: "name")
+
+someModuleNamed :: ModuleName -> ModuleRef
+someModuleNamed = ModuleRef Nothing
+
+prettyModuleRef :: ModuleRef -> String
+prettyModuleRef (ModuleRef Nothing mn) = renderModuleName mn
+prettyModuleRef (ModuleRef (Just (PackageName p)) mn) = T.unpack p <> "." <> renderModuleName mn
+
+-- | Convert a module reference to text.
+--
+-- This should only be used for user-facing purposes (logging, errors etc).
+moduleRefToText :: ModuleRef -> Text
+moduleRefToText (ModuleRef Nothing name) = runModuleName name
+moduleRefToText (ModuleRef (Just pkg) name) = mconcat [packageNameToText pkg, ".", runModuleName name]
 
 -- | A map of locally-bound names in scope.
 type Context = [(Ident, SourceType)]

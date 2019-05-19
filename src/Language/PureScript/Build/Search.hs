@@ -1,6 +1,7 @@
 module Language.PureScript.Build.Search where
 
 import Prelude.Compat
+import Debug.Trace
 
 import Control.Monad.Base (liftBase)
 import Control.Monad (forM_, filterM)
@@ -13,16 +14,11 @@ import qualified Data.Text as T
 import Language.PureScript.Names
 import Language.PureScript.Errors
 import Language.PureScript.Build.Types
+import Language.PureScript.Build.Manifest
 
-import           System.FilePath ((</>), takeFileName, takeDirectory, takeBaseName, takeExtension)
+import           System.FilePath ((</>), takeFileName, takeDirectory, takeBaseName, takeExtension, dropExtension)
 import qualified System.Directory as D
 
-
-
-
-
-manifestFileName :: FilePath
-manifestFileName = "manifest.db"
 
 -- Characters which are allowed to appear in module names
 validChars :: S.Set Char
@@ -45,28 +41,38 @@ isValidPursFile path = case (takeBaseName path, takeExtension path) of
 -- | Collect all of the source files from a given root directory.
 findModulesIn :: FilePath -> IO [ModuleName]
 findModulesIn root = do
-  putStrLn $ "Discovering source files in " <> root
-  found <- execStateT (go (ModuleName [])) []
-  putStrLn $ "Found " <> show (length found) <> " files"
+  traceM $ "Discovering source files in " <> root
+  found <- execStateT (go Nothing) []
+  traceM $ "Found " <> show (length found) <> " files"
   pure found
   where
-  go :: ModuleName -> StateT [ModuleName] IO ()
-  go modName = do
-    let dir = takeDirectory $ root </> moduleNameToRelPath modName
+  go :: Maybe ModuleName -> StateT [ModuleName] IO ()
+  go mModName = do
+    traceM $ "Go " <> show (renderModuleName <$> mModName)
+    -- Figure out what directory to be looking for files in
+    let dir = case mModName of
+          Nothing -> root
+          Just modName -> dropExtension $ root </> moduleNameToRelPath modName
+    traceM $ "Dir " <> show dir
     files <- liftBase $ D.listDirectory dir
     pursFiles <- filterM (liftBase . isValidPursFile . (dir </>)) files
     subdirs <- filterM (liftBase . isValidPursSubdir . (dir </>)) files
+    traceM $ show (dir, pursFiles, subdirs)
 
     -- Collect files in this directory
     forM_ pursFiles $ \filename -> do
       -- Strip off the ".purs" extension
       let baseModName = ProperName $ T.dropEnd 5 $ T.pack filename
-      let modName' = addModuleName baseModName modName
-      modify (modName':)
+      let modName = case mModName of
+            Nothing -> ModuleName [baseModName]
+            Just mn -> addModuleName baseModName mn
+      traceM $ "Adding module name " <> renderModuleName modName
+      modify (modName:)
 
     -- Recur on subdirectories
-    forM_ subdirs $ \subdir -> do
-      go (addModuleName (ProperName $ T.pack subdir) modName)
+    forM_ subdirs $ \subdir -> go $ Just $ case mModName of
+      Nothing -> ModuleName [ProperName $ T.pack subdir]
+      Just modName -> addModuleName (ProperName $ T.pack subdir) modName
 
 data ModulesAndRoot = ModulesAndRoot {
   -- Root directory of the discovered modules
@@ -85,17 +91,18 @@ data DiscoveredPackage
 
 discoverPackage
   :: forall m. (MonadBaseControl IO m, MonadError MultipleErrors m)
-  => PackageRef -- ^ Package being compiled
+  => PackageName -- ^ Package being compiled
   -> [FilePath] -- ^ Search locations
   -> m DiscoveredPackage
-discoverPackage LocalPackage _ = undefined
-discoverPackage (DepPackage pn@(PackageName (T.unpack -> n))) locations = go locations
+discoverPackage pn@(PackageName (T.unpack -> n)) locations = go locations
   where
     findPackageModules :: [FilePath] -> m (Maybe ModulesAndRoot)
     findPackageModules [] = pure Nothing
-    findPackageModules (root:otherPaths) = liftBase (findModulesIn root) >>= \case
-      [] -> findPackageModules otherPaths
-      modules -> pure (Just $ ModulesAndRoot root modules)
+    findPackageModules (root:otherPaths) = liftBase (D.doesDirectoryExist root) >>= \case
+      False -> findPackageModules otherPaths
+      True -> liftBase (findModulesIn root) >>= \case
+        [] -> findPackageModules otherPaths
+        modules -> pure (Just $ ModulesAndRoot root modules)
 
     go :: [FilePath] -> m DiscoveredPackage
     go [] = throwSimpleError $ PackageNotFound pn
@@ -106,6 +113,6 @@ discoverPackage (DepPackage pn@(PackageName (T.unpack -> n))) locations = go loc
         -- If there's a manifest, merge it into the project manifest.
         True -> pure $ Precompiled (dir </> n </> manifestFileName)
         -- Otherwise, try to find package modules in it.
-        False -> findPackageModules [dir, dir </> "root"] >>= \case
+        False -> findPackageModules [dir </> n, dir </> n </> "src"] >>= \case
           Just modules -> pure $ Uncompiled modules
           Nothing -> go dirs

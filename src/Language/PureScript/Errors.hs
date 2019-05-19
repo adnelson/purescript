@@ -10,6 +10,7 @@ import           Prelude.Compat
 import           Protolude (ordNub)
 
 import           Control.Arrow ((&&&))
+import           Control.Exception (Exception)
 import           Control.Concurrent.Async.Lifted (forConcurrently)
 import           Control.Monad
 import           Control.Monad.Error.Class (MonadError(..))
@@ -28,6 +29,7 @@ import           Data.Ord (comparing)
 import qualified Data.Set as S
 import qualified Data.Text as T
 import           Data.Text (Text)
+import           Data.Typeable (Typeable)
 import           Language.PureScript.AST
 import qualified Language.PureScript.Bundle as Bundle
 import qualified Language.PureScript.Constants as C
@@ -194,7 +196,9 @@ errorCode em = case unwrapErrorMessage em of
 -- | A stack trace for an error
 newtype MultipleErrors = MultipleErrors
   { runMultipleErrors :: [ErrorMessage]
-  } deriving (Show, Semigroup, Monoid)
+  } deriving (Show, Semigroup, Monoid, Typeable)
+
+instance Exception MultipleErrors
 
 -- | Check whether a collection of errors is empty or not.
 nonEmpty :: MultipleErrors -> Bool
