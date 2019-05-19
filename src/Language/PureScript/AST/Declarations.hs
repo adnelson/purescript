@@ -100,6 +100,7 @@ onTypeSearchTypesM :: (Applicative m) => (SourceType -> m SourceType) -> TypeSea
 onTypeSearchTypesM f (TSAfter i r) = TSAfter <$> traverse (traverse f) i <*> traverse (traverse (traverse f)) r
 onTypeSearchTypesM _ (TSBefore env) = pure (TSBefore env)
 
+
 -- | A type of error messages
 data SimpleErrorMessage
   = PackageNotFound PackageName
@@ -219,7 +220,7 @@ data SimpleErrorMessage
   | CannotDefinePrimModules ModuleName
   | MixedAssociativityError (NEL.NonEmpty (Qualified (OpName 'AnyOpName), Associativity))
   | NonAssociativeError (NEL.NonEmpty (Qualified (OpName 'AnyOpName)))
-  deriving (Show)
+  deriving (Show, Generic)
 
 -- | Error message hints, providing more detailed information about failure.
 data ErrorMessageHint

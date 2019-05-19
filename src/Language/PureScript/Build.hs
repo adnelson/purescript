@@ -14,7 +14,7 @@ module Language.PureScript.Build (
   ) where
 
 import Prelude.Compat
-import Protolude (forM, ordNub, whenM)
+import Protolude (forM, ordNub, when, whenM, throwError)
 import System.FilePath ((</>))
 import Debug.Trace (traceM)
 import Control.Concurrent.Async.Lifted
@@ -36,6 +36,7 @@ import Control.Monad.Supply
 import Control.Monad.Trans.Control (MonadBaseControl(..))
 import Control.Monad.Reader.Class (MonadReader(..), asks)
 
+import Language.PureScript.Crash (internalError)
 import Language.PureScript.Constants (isPrim)
 import Language.PureScript.Names
 import Language.PureScript.AST
@@ -53,9 +54,6 @@ import Language.PureScript.Build.Manifest
 import Language.PureScript.Build.Types
 import Language.PureScript.Build.Monad
 
--- instance ToJSON BuildConfig where toJSON = genericToJSON defaultOptions
--- instance FromJSON BuildConfig where parseJSON = genericParseJSON defaultOptions
-
 -- | Acquire the connnection to the database and use it in an action.
 withConn :: Build m => (SQLite.Connection -> m a) -> m a
 withConn action = asks bvConn >>= \mv -> withMVar mv action
@@ -72,21 +70,36 @@ query
 query (Query qry) args conn = liftBase (SQLite.query conn qry args)
 
 -- Use a join on the module source table to get the path.
-getCachedBuildFromDatabase :: Build m => ResolvedModuleRef -> m (Maybe CachedBuild)
-getCachedBuildFromDatabase rmref = error $ "getCachedBuildFromDatabase " <> show rmref
+-- getCachedBuildFromDatabase :: Build m => ResolvedModuleRef -> m (Maybe CachedBuild)
+-- getCachedBuildFromDatabase rmref = withConn (query error $ "getCachedBuildFromDatabase " <> show rmref
 
 cacheBuildInDatabase :: Build m => ResolvedModuleRef -> CachedBuild -> m ()
 cacheBuildInDatabase _ _ = error $ "cacheBuildInDatabase"
 
 compileModule :: Build m => [ExternsFile] -> Module -> m ExternsFile
 compileModule externs modl = do
-  let ffiCodegen = error "ffiCodegen not defined"
+  -- let ffiCodegen m = do
+  --         let mn = CF.moduleName m
+  --             foreignFile = outputFilename mn "foreign.js"
+  --         case mn `M.lookup` foreigns of
+  --           Just path
+  --             | not $ requiresForeign m ->
+  --                 tell $ errorMessage' (CF.moduleSourceSpan m) $ UnnecessaryFFIModule mn path
+  --             | otherwise ->
+  --                 checkForeignDecls m path
+  --           Nothing | requiresForeign m -> throwError . errorMessage' (CF.moduleSourceSpan m) $ MissingFFIModule mn
+  --                   | otherwise -> return ()
+  --         for_ (mn `M.lookup` foreigns) (readTextFile >=> writeTextFile foreignFile)
   let env = foldl' (flip applyExternsFileToEnvironment) initEnvironment externs
       -- This adds `import Prim` and `import qualified Prim` to the
       -- module. Is this really necessary? It seems redundant and
       -- inefficient. Instead, these modules could just be treated
       -- specially when resolving them.
       withPrim = importPrim modl
+      moduleName = getModuleName modl
+  when (renderModuleName moduleName == "Data.Show") $ do
+    traceM $ "Compiling " <> renderModuleName moduleName <> " with dependencies "
+          <> show (map (renderModuleName . efModuleName) externs)
   lint withPrim
   ((Module ss coms _ elaborated exps, env'), nextVar) <- runSupplyT 0 $ do
     desugar externs [withPrim] >>= \case
@@ -98,14 +111,15 @@ compileModule externs modl = do
   -- reports as not-exhaustive.
   (deguarded, _) <- runSupplyT nextVar $ desugarCaseGuards elaborated
 
-  let moduleName = getModuleName modl
+
   regrouped <- createBindingGroups moduleName . collapseBindingGroups $ deguarded
   let mod' = Module ss coms moduleName regrouped exps
       corefn = CF.moduleToCoreFn env' mod'
       optimized = CF.optimizeCoreFn corefn
       [renamed] = renameInModules [optimized]
       exts = moduleToExternsFile mod' env'
-  _ <- ffiCodegen renamed
+  traceM $ "Successfully compiled " <> renderModuleName moduleName
+  -- _ <- ffiCodegen renamed
   -- evalSupplyT nextVar' . codegen renamed env' . encode $ exts
   return exts
 
@@ -310,7 +324,7 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
               resolveModuleRef (rmrPackageRef r) mref >>= wait
             (rmref,) <$> getModuleRecord (pushTrace r trace) rmref
 
-          traceM $ "2"
+--          traceM $ "2"
           depInfos :: [(ResolvedModuleRef, ModuleRecord)] <- do
             forM resolvedImportAsyncs $ \(rmref, a) -> do
               recd :: ModuleRecord <- wait a
@@ -319,7 +333,7 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
           let depStamps = map (mrStamp . snd) depInfos
           let stamp' = foldr (<>) stamp depStamps
 
-          traceM $ "3"
+--          traceM $ "3"
           withConn $ \conn -> do
             -- Create a module dependency list
             execute insertModuleStampQ (stamp', mId) conn
@@ -332,22 +346,38 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
 -- | Given a resolved module reference, compile it into externs. This result is cached.
 buildResolvedModule
   :: forall m. Build m
-  => ResolvedModuleRef -> m (AsyncLoad m (ExternsFile, ModuleStamp))
+  => ResolvedModuleRef -> m (AsyncLoad m (ExternsFile, ExternsStamp))
 buildResolvedModule = loadAsync bvExternCompiles $ \rmref -> do
   -- Get dependencies from the record and recur on them first.
-  ModuleRecord path stamp depRefs <- getModuleRecord newTrace rmref >>= wait
-  deps :: [(ExternsFile, ModuleStamp)] <- forConcurrently depRefs (buildResolvedModule >=> wait)
+  ModuleRecord path modStamp depRefs <- getModuleRecord newTrace rmref >>= wait
+  deps :: [(ExternsFile, ExternsStamp)] <- forConcurrently depRefs (buildResolvedModule >=> wait)
 
-  getCachedBuildFromDatabase rmref >>= \case
-    -- If the stored stamp is up to date, return immediately
-    Just (CachedBuild externs stamp') | stamp' >= stamp -> pure (externs, stamp')
-
+  -- Could get the externs and the timestamp in a single query. The
+  -- advantage is one fewer query; the tradeoff is that if the
+  -- timestamp is out of date, we waste time parsing the externs,
+  -- which could be quite large. We are locking the database for the
+  -- two queries.
+  let mId = rmrModuleId rmref
+  existing <- withConn $ \conn -> do
+    query getModuleExternsStampQ mId conn >>= \case
+      Only (Just extsStamp):_ | extsStamp `isUpToDateAgainst` modStamp -> do
+        query getModuleExternsQ mId conn >>= \case
+          Only result:_ -> pure $ Just (CachedBuild result extsStamp)
+          _ -> internalError "Externs stamp recorded but no externs"
+      _ -> pure Nothing
+  case existing of
+    Just (CachedBuild (Just externs) stamp') -> pure (externs, stamp')
     -- Otherwise, rebuild the module, cache it and return the new stamp.
     _ -> do
+      stamp' <- liftBase currentTime
       source <- liftBase $ B8.readFile path
       modl <- parseModule path source
-      externs <- compileModule (map fst deps) modl
-      (externs, stamp) <$ cacheBuildInDatabase rmref (CachedBuild externs stamp)
+      exts <- Right <$> compileModule (map fst deps) modl
+      let exts' = either (const Nothing) Just exts
+      withConn (execute insertModuleExternsQ (exts', stamp', mId))
+      case exts of
+        Left err -> throwError err
+        Right externs -> pure (externs, stamp')
 
 resolveEntryPoints :: forall m. Build m => m (NonEmpty (AsyncLoad m ResolvedModuleRef))
 resolveEntryPoints = do
@@ -363,6 +393,14 @@ resolveEntryPointDeps = do
     rmref <- resolveModuleRef LocalPackage (ModuleRef Nothing modName) >>= wait
     record :: ModuleRecord <- getModuleRecord newTrace rmref >>= wait
     pure (rmref, record)
+
+buildEntryPoints
+  :: forall m. Build m => m (NonEmpty (ExternsFile, ExternsStamp))
+buildEntryPoints = do
+  entryPoints <- bcEntryPoints . bvConfig <$> ask
+  forM entryPoints $ \modName -> do
+    rmref <- resolveModuleRef LocalPackage (ModuleRef Nothing modName) >>= wait
+    buildResolvedModule rmref >>= wait
 
 -- Create the build directory and the initial manifest DB.
 initBuild :: MonadBaseControl IO m => BuildConfig -> m (BuildVars (Builder m))

@@ -73,3 +73,27 @@ desugar externs = do
     >=> traverse (deriveInstances externs)
     >=> desugarTypeClasses externs
     >=> traverse createBindingGroupsModule
+
+-- desugar1
+--   :: (MonadSupply m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+--   => [ExternsFile]
+--   -> Module
+--   -> m Module
+-- desugar1 externs modl = do
+--   modl' <- pure (desugarSignedLiterals modl) >>= desugarDoModule >>= desugarAdoModule
+--        >>= pure . desugarLetPatternModule >>= desugarCasesModule
+--        >>= desugarTypeDeclarationsModule
+--        >>= desugarImports externs
+--   _what
+    -- >=> desugarObjectConstructors
+    -- >=> desugarDoModule
+    -- >=> desugarAdoModule
+    -- >=> map desugarLetPatternModule
+    -- >>> traverse desugarCasesModule
+    -- >=> traverse desugarTypeDeclarationsModule
+    -- >=> desugarImports externs
+    -- >=> rebracket externs
+    -- >=> traverse checkFixityExports
+    -- >=> traverse (deriveInstances externs)
+    -- >=> desugarTypeClasses externs
+    -- >=> traverse createBindingGroupsModule

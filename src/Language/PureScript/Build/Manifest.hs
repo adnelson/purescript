@@ -11,6 +11,7 @@ import Database.SQLite.Simple hiding (Query)
 import qualified Database.SQLite.Simple as SQLite
 
 import Language.PureScript.Names
+import Language.PureScript.Externs
 import Language.PureScript.Build.Types
 
 -- | Name of the file to use for the manifest SQLite database.
@@ -36,11 +37,19 @@ CREATE TABLE IF NOT EXISTS package (
 createModuleMetaTableQ :: Query () ()
 createModuleMetaTableQ =  fromString [r|
 CREATE TABLE IF NOT EXISTS module (
-  package INT NOT NULL, -- modules must belong to a package
+  -- modules must belong to a package, this is its ID.
+  package INT NOT NULL,
+  -- Name of the module. E.g. 'Data.Foo'
   name TEXT NOT NULL,
-  -- Path is null if there's no source code available
-  path TEXT UNIQUE,
-  timestamp TEXT, -- timestamp at time of hash (null if not yet loaded)
+  -- TODO: Path to the source code file, to support nonstandard module paths
+  -- path TEXT UNIQUE NOT NULL,
+  -- Latest recorded timestamp of the file path. Null if not yet loaded.
+  file_stamp TEXT,
+  -- Latest recorded compilation timestamp. Null if not yet compiled.
+  -- A compilation stamp without an externs file indicates a failed compilation.
+  externs_stamp TEXT,
+  -- externs for this module (JSON). Null if not yet compiled.
+  externs BLOB,
   FOREIGN KEY (package) REFERENCES package(rowid)
 );
 |]
@@ -99,7 +108,7 @@ AS SELECT
   module.rowid as module_id,
   package.name as package_name,
   module.path as path,
-  module.timestamp as module_stamp
+  module.file_stamp as module_stamp
 FROM module
 INNER JOIN package_module AS pmm ON pmm.module = module.rowid
 INNER JOIN package ON pmm.package = package.rowid;
@@ -117,7 +126,7 @@ INSERT INTO module (package, name) VALUES (
 |]
 
 insertModuleStampQ :: Query (ModuleStamp, ModuleId) ()
-insertModuleStampQ = "UPDATE module SET timestamp = ? WHERE rowid = ?"
+insertModuleStampQ = "UPDATE module SET file_stamp = ? WHERE rowid = ?"
 
 insertModuleDependsQ :: Query (ModuleId, ModuleId) ()
 insertModuleDependsQ = "INSERT INTO module_depends (module, depends) VALUES (?, ?)"
@@ -125,12 +134,22 @@ insertModuleDependsQ = "INSERT INTO module_depends (module, depends) VALUES (?, 
 insertPackageQ :: Query (PackageRef, FilePath) ()
 insertPackageQ = "INSERT INTO package (name, root) VALUES (?, ?)"
 
+insertModuleExternsQ :: Query (Maybe ExternsFile, ExternsStamp, ModuleId) ()
+insertModuleExternsQ = "UPDATE module SET externs = ?, externs_stamp = ? WHERE rowid = ?"
 
 ----------------- GETS
 
 -- Get the dependency list meta (TODO rename this, maybe modulesignature?)
 getModuleStampQ :: Query ModuleId (Only (Maybe ModuleStamp))
-getModuleStampQ = "SELECT timestamp FROM module WHERE rowid = ?"
+getModuleStampQ = "SELECT file_stamp FROM module WHERE rowid = ?"
+
+-- Get the dependency list meta (TODO rename this, maybe modulesignature?)
+getModuleExternsStampQ :: Query ModuleId (Only (Maybe ExternsStamp))
+getModuleExternsStampQ = "SELECT externs_stamp FROM module WHERE rowid = ?"
+
+-- Get the dependency list meta (TODO rename this, maybe modulesignature?)
+getModuleExternsQ :: Query ModuleId (Only (Maybe ExternsFile))
+getModuleExternsQ = "SELECT externs FROM module WHERE rowid = ?"
 
 -- Get dependencies of a module (enough to construct a ResolvedModuleRef)
 getModuleDependsQ :: Query ModuleId (ModuleId, PackageRef, ModuleName)

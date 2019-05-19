@@ -2,7 +2,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DeriveFoldable #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveAnyClass #-}
 
 -- |
@@ -37,6 +36,8 @@ data Name
   deriving (Eq, Ord, Show, Generic)
 
 instance NFData Name
+instance ToJSON Name
+instance FromJSON Name
 
 getIdentName :: Name -> Maybe Ident
 getIdentName (IdentName name) = Just name

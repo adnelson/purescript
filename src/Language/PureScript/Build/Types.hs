@@ -8,7 +8,7 @@ import Data.Aeson
 import Control.Concurrent.MVar.Lifted
 import Control.Concurrent.Async.Lifted
 import Data.List.NonEmpty (NonEmpty)
-import Data.Time.Clock (UTCTime)
+import Data.Time.Clock (UTCTime, getCurrentTime)
 import qualified Data.List.NonEmpty as N
 import Database.SQLite.Simple
 import Database.SQLite.Simple.FromField
@@ -49,13 +49,14 @@ instance ToField PackageRef where
 
 instance FromField PackageRef where
   fromField f = fromField f >>= \case
-    "" -> pure LocalPackage
+    "/LOCAL/" -> pure LocalPackage
     pname -> pure $ DepPackage $ PackageName pname
 
-data CachedBuild = CachedBuild {
-  cbExterns :: !ExternsFile,
-  cbStamp :: !(Stamp 'Mod)
-  } deriving (Show)
+-- Stores a `nothing` if the build failed.  (TODO store actual error,
+-- but this involves writing quite a few ToJSON/FromJSON
+-- instances....)
+data CachedBuild = CachedBuild !(Maybe ExternsFile) !(Stamp 'Exts)
+  deriving (Show)
 
 -- | Refers to a module which has been discovered by the package manager.
 -- Can be considered "proof" that the given module exists.
@@ -96,11 +97,9 @@ data ModuleMeta = ModuleMeta !ModuleId !FilePath !(Stamp 'Mod)
 data HasId
   = PkgHasId
   | ModHasId
-  | ModDepListHasId
 
 type PackageId = Id 'PkgHasId
 type ModuleId = Id 'ModHasId
-type ModuleDepListId = Id 'ModDepListHasId
 
 newtype Id (a :: HasId) = Id Int
   deriving (Show, Eq, Ord, FromField, ToField, ToJSON, FromJSON)
@@ -108,22 +107,29 @@ newtype Id (a :: HasId) = Id Int
 instance ToRow (Id a) where toRow = toRow . Only
 instance FromRow (Id a) where fromRow = fromOnly <$> fromRow
 
--- | Kinds of things that can be hashed/timestamped/etc
-data ObjType = Pkg | Mod
+-- | Kinds of things that can be timestamped
+data HasStamp = Pkg | Mod | Exts
 
-newtype Hash (a :: ObjType) = Hash { unHash :: B8.ByteString }
+newtype Hash (a :: HasStamp) = Hash { unHash :: B8.ByteString }
   deriving (Show, Eq, FromField, ToField)
 
 type PackageHash = Hash 'Pkg
 
-newtype Stamp (a :: ObjType) = Stamp {tStamp :: UTCTime}
+newtype Stamp (a :: HasStamp) = Stamp {tStamp :: UTCTime}
   deriving (Show, Eq, Ord, FromField, ToField, ToJSON, FromJSON)
 instance Semigroup (Stamp a) where (<>) = max
 
+isUpToDateAgainst :: Stamp a -> Stamp b -> Bool
+isUpToDateAgainst (Stamp s1) (Stamp s2) = s1 >= s2
+
 type ModuleStamp = Stamp 'Mod
+type ExternsStamp = Stamp 'Exts
 
 readStamp :: FilePath -> IO (Stamp a)
 readStamp p = Stamp <$> D.getModificationTime p
+
+currentTime :: IO (Stamp a)
+currentTime = Stamp <$> getCurrentTime
 
 -- TODO could be a more efficient/correct way to implement this
 instance Semigroup (Hash a) where

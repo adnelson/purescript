@@ -72,7 +72,7 @@ resolveModuleImport env ie (ModuleRef _ mn, imps) = foldM go ie imps
   go ie' (ss, typ, impQual) = do
     modExports <-
       maybe
-        (throwError . errorMessage' ss $ ModuleNotFound mn)
+        (throwError . errorMessage' ss $ ModuleNotFound mn) -- error ("Module " <> renderModuleName mn <> " not found?? " <> show (map renderModuleName $ M.keys env))) -- ModuleNotFound mn)
         (return . envModuleExports)
         (mn `M.lookup` env)
     let impModules = importedModules ie'

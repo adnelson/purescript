@@ -11,6 +11,7 @@ module Language.PureScript.Sugar.Names
 
 import Prelude.Compat
 import Protolude (ordNub, sortBy, on)
+import Debug.Trace (traceM)
 
 import Control.Arrow (first)
 import Control.Monad
@@ -45,7 +46,7 @@ desugarImports
   => [ExternsFile]
   -> [Module]
   -> m [Module]
-desugarImports externs modules =
+desugarImports externs modules = do
   fmap snd (desugarImportsWithEnv externs modules)
 
 desugarImportsWithEnv
@@ -61,13 +62,18 @@ desugarImportsWithEnv externs modules = do
   where
   silence :: m a -> m a
   silence = censor (const mempty)
+  extMods :: [ModuleName] = map efModuleName externs
 
   -- | Create an environment from a collection of externs files
   externsEnv :: Env -> ExternsFile -> m Env
   externsEnv env ExternsFile{..} = do
+--    () <- error "FAAAAAAABALABLABAL!!"
     let members = Exports{..}
         env' = M.insert efModuleName (efSourceSpan, nullImports, members) env
-        fromEFImport (ExternsImport mn mt qmn) = (mn, [(efSourceSpan, Just mt, qmn)])
+        fromEFImport (ExternsImport mref mt qmn) = (mref, [(efSourceSpan, Just mt, qmn)])
+    let envKeys :: [ModuleName] = M.keys env'
+    traceM $ "Desugar imports: variables " <> show (map renderModuleName envKeys)
+          <> " externs " <> show (map renderModuleName extMods)
     imps <- foldM (resolveModuleImport env') nullImports (map fromEFImport efImports)
     exps <- resolveExports env' efSourceSpan efModuleName imps members efExports
     return $ M.insert efModuleName (efSourceSpan, imps, exps) env
