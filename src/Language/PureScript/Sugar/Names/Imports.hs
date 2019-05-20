@@ -6,6 +6,7 @@ module Language.PureScript.Sugar.Names.Imports
   ) where
 
 import Prelude.Compat
+import Debug.Trace
 
 import Control.Monad
 import Control.Monad.Error.Class (MonadError(..))
@@ -29,12 +30,11 @@ type ImportDef = (SourceSpan, ImportDeclarationType, Maybe ModuleName)
 --
 findImports
   :: [Declaration]
-  -> M.Map ModuleRef [ImportDef]
+  -> M.Map ModuleName [ImportDef]
 findImports = foldr go M.empty
   where
-  go (ImportDeclaration (pos, _) mref typ qual) result =
-    let imp = (pos, typ, qual)
-    in M.insert mref (maybe [imp] (imp :) (mref `M.lookup` result)) result
+  go (ImportDeclaration (pos, _) (ModuleRef _ mname) typ qual) result =
+    M.insertWith (<>) mname [(pos, typ, qual)] result
   go _ result = result
 
 -- |
@@ -50,29 +50,30 @@ resolveImports env modl@(Module ss coms currentModule decls exps) =
   rethrow (addHint (ErrorInModule currentModule)) $ do
     let imports = findImports decls
         imports' = M.map (map (\(ss', dt, mmn) -> (ss', Just dt, mmn))) imports
-        internalMRef = ModuleRef Nothing currentModule
         internalSpan = internalModuleSourceSpan "<module>"
-        scope = M.insert internalMRef [(internalSpan, Nothing, Nothing)] imports'
-    (modl,) <$> foldM (resolveModuleImport env) nullImports (M.toList scope)
+        scope = M.insert currentModule [(internalSpan, Nothing, Nothing)] imports'
+    (modl,) <$> foldM (resolveModuleImport "" env) nullImports (M.toList scope)
 
 -- | Constructs a set of imports for a single module import.
--- NOTE: ignoring package names for now
 resolveModuleImport
   :: forall m
    . MonadError MultipleErrors m
-  => Env
+  => String
+  -> Env
   -> Imports
-  -> (ModuleRef, [(SourceSpan, Maybe ImportDeclarationType, Maybe ModuleName)])
+  -> (ModuleName, [(SourceSpan, Maybe ImportDeclarationType, Maybe ModuleName)])
   -> m Imports
-resolveModuleImport env ie (ModuleRef _ mn, imps) = foldM go ie imps
+resolveModuleImport mname env ie (mn, imps) = foldM go ie imps
   where
   go :: Imports
      -> (SourceSpan, Maybe ImportDeclarationType, Maybe ModuleName)
      -> m Imports
   go ie' (ss, typ, impQual) = do
+    when (mname == "Data.Unit") $ do
+      traceM $ "resolveModuleImport, " <> mname <> " importing " <> renderModuleName mn
     modExports <-
       maybe
-        (throwError . errorMessage' ss $ ModuleNotFound mn) -- error ("Module " <> renderModuleName mn <> " not found?? " <> show (map renderModuleName $ M.keys env))) -- ModuleNotFound mn)
+        (throwError . errorMessage' ss $ error (mname <> " => " <> renderModuleName mn)) -- error ("Module " <> renderModuleName mn <> " not found?? " <> show (map renderModuleName $ M.keys env))) -- ModuleNotFound mn)
         (return . envModuleExports)
         (mn `M.lookup` env)
     let impModules = importedModules ie'

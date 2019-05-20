@@ -66,7 +66,7 @@ lintImports (Module _ _ mn mdecls (Just mexports)) env usedImps = do
       usedImps' = foldr (elaborateUsed scope) usedImps exportedModules
       numOpenImports = getSum $ foldMap (Sum . countOpenImports) mdecls
       allowImplicit = numOpenImports == 1
-      imports = (\(mr, d) -> (mrName mr, d)) <$> M.toAscList (findImports mdecls)
+      imports = M.toAscList (findImports mdecls)
 
   for_ imports $ \(mni, decls) ->
     unless (C.isPrim mni) .

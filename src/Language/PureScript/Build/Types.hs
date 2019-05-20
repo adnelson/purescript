@@ -1,6 +1,9 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveGeneric #-}
-module Language.PureScript.Build.Types where
+module Language.PureScript.Build.Types (
+  module Language.PureScript.Build.Types,
+  module Language.PureScript.Package
+  ) where
 
 import Prelude.Compat
 
@@ -29,28 +32,7 @@ import GHC.Generics
 import Language.PureScript.Names
 import Language.PureScript.Errors
 import Language.PureScript.Externs
-
-data PackageRef
-  = LocalPackage
-  | DepPackage !PackageName
-  deriving (Show, Eq, Ord)
-
-prettyPackageRef :: PackageRef -> String
-prettyPackageRef LocalPackage = "<<local package>>"
-prettyPackageRef (DepPackage (PackageName n)) = T.unpack n
-
-instance ToRow PackageRef where
-  toRow = toRow . Only
-
-instance ToField PackageRef where
-  toField = \case
-    LocalPackage -> toField ("/LOCAL/" :: String)
-    DepPackage pname -> toField pname
-
-instance FromField PackageRef where
-  fromField f = fromField f >>= \case
-    "/LOCAL/" -> pure LocalPackage
-    pname -> pure $ DepPackage $ PackageName pname
+import Language.PureScript.Package
 
 -- Stores a `nothing` if the build failed.  (TODO store actual error,
 -- but this involves writing quite a few ToJSON/FromJSON
@@ -77,9 +59,9 @@ instance ToJSON ResolvedModuleRef where
     "id" .= mid
     ]
 
-renderRMR :: ResolvedModuleRef -> String
-renderRMR (ResolvedModuleRef _ LocalPackage mn) = renderModuleName mn
-renderRMR (ResolvedModuleRef _ p mn) = prefix <> renderModuleName mn where
+prettyRMRef :: ResolvedModuleRef -> String
+prettyRMRef (ResolvedModuleRef _ LocalPackage mn) = renderModuleName mn
+prettyRMRef (ResolvedModuleRef _ p mn) = prefix <> renderModuleName mn where
   prefix = case p of
     LocalPackage -> ""
     DepPackage (PackageName p') -> T.unpack p' <> "."

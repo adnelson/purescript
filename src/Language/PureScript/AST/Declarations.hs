@@ -16,6 +16,7 @@ import Prelude.Compat
 
 import Control.DeepSeq (NFData)
 import Control.Monad.Identity
+import Control.Applicative ((<|>))
 
 import Data.Aeson
 import Data.Aeson.TH
@@ -51,15 +52,18 @@ data ModuleRef = ModuleRef {
   mrName :: ModuleName
   } deriving (Show, Eq, Ord, Generic, NFData)
 
+-- instance ToJSON ModuleRef
+-- instance FromJSON ModuleRef
 instance ToJSON ModuleRef where
   toJSON (ModuleRef Nothing name) = toJSON name
   toJSON (ModuleRef (Just pkg) name) = object ["package" .= pkg, "name" .= name]
 
 instance FromJSON ModuleRef where
-  parseJSON = \case
-    s@(String _) -> someModuleNamed <$> parseJSON s
-    val -> flip (withObject "qualified module reference") val $ \o -> do
-      ModuleRef <$> (o .: "package") <*> (o .: "name")
+  parseJSON val = do
+    let parseQualified o = ModuleRef <$> (o .: "package") <*> (o .: "name")
+    fmap someModuleNamed (parseJSON val)
+      <|> withObject "qualified module reference" parseQualified val
+
 
 someModuleNamed :: ModuleName -> ModuleRef
 someModuleNamed = ModuleRef Nothing

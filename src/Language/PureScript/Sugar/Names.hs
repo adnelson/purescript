@@ -10,7 +10,7 @@ module Language.PureScript.Sugar.Names
   ) where
 
 import Prelude.Compat
-import Protolude (ordNub, sortBy, on)
+import Protolude (ordNub, sortBy, on, isPrefixOf)
 import Debug.Trace (traceM)
 
 import Control.Arrow (first)
@@ -56,6 +56,8 @@ desugarImportsWithEnv
   -> [Module]
   -> m (Env, [Module])
 desugarImportsWithEnv externs modules = do
+  when ((renderModuleName . getModuleName <$> modules) == ["Data.Unit"]) $ do
+    traceM $ "Desugaring imports of " <> mn' <> " with externs " <> show (map (renderModuleName . efModuleName) externs)
   env <- silence $ foldM externsEnv primEnv externs
   (modules', env') <- first reverse <$> foldM updateEnv ([], env) modules
   (env',) <$> traverse (renameInModule' env') modules'
@@ -64,17 +66,26 @@ desugarImportsWithEnv externs modules = do
   silence = censor (const mempty)
   extMods :: [ModuleName] = map efModuleName externs
 
-  -- | Create an environment from a collection of externs files
+  mn' = case modules of
+         [m] -> renderModuleName $ getModuleName m
+         _ -> internalError "Encountered 0 or multiple modules"
+
+  -- newEnv :: Env
+  -- newEnv = foldr (\(ExternsFile {..}) e -> M.insert efModuleName (efSourceSpan, nullImports, members))
+
+  -- | Create an environment from an externs file
   externsEnv :: Env -> ExternsFile -> m Env
   externsEnv env ExternsFile{..} = do
---    () <- error "FAAAAAAABALABLABAL!!"
     let members = Exports{..}
         env' = M.insert efModuleName (efSourceSpan, nullImports, members) env
-        fromEFImport (ExternsImport mref mt qmn) = (mref, [(efSourceSpan, Just mt, qmn)])
+        fromEFImport (ExternsImport _ mname mt qmn) = (mname, [(efSourceSpan, Just mt, qmn)])
     let envKeys :: [ModuleName] = M.keys env'
-    traceM $ "Desugar imports: variables " <> show (map renderModuleName envKeys)
-          <> " externs " <> show (map renderModuleName extMods)
-    imps <- foldM (resolveModuleImport env') nullImports (map fromEFImport efImports)
+        envModNames = filter (not . isPrefixOf "Prim") (map renderModuleName envKeys)
+    when (mn' == "Data.Unit") $
+      traceM $ "Desugar imports of " <> mn' <> ": variables " <> show envModNames
+            <> " externs of " <> renderModuleName efModuleName
+            <> " imports " <> show (map (renderModuleName . eiModule) efImports)
+    imps <- foldM (resolveModuleImport mn' env') nullImports (map fromEFImport efImports)
     exps <- resolveExports env' efSourceSpan efModuleName imps members efExports
     return $ M.insert efModuleName (efSourceSpan, imps, exps) env
     where

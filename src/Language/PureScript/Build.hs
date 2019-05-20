@@ -28,6 +28,7 @@ import Data.List (foldl')
 import Data.Map (Map)
 import Data.Maybe (catMaybes, mapMaybe)
 import qualified Data.Map as M
+import qualified Data.Set as S
 import qualified Data.Text.Encoding as T
 import qualified Database.SQLite.Simple as SQLite
 import Control.Monad ((>=>))
@@ -54,21 +55,6 @@ import Language.PureScript.Build.Manifest
 import Language.PureScript.Build.Types
 import Language.PureScript.Build.Monad
 
--- | Acquire the connnection to the database and use it in an action.
-withConn :: Build m => (SQLite.Connection -> m a) -> m a
-withConn action = asks bvConn >>= \mv -> withMVar mv action
-
-execute :: (MonadBaseControl IO m, SQLite.ToRow i) => Query i () -> i -> Connection -> m ()
-execute (Query qry) args conn = liftBase $ SQLite.execute conn qry args
-
-executeMany :: (MonadBaseControl IO m, SQLite.ToRow i) => Query i () -> [i] -> Connection -> m ()
-executeMany (Query q) args conn = liftBase $ SQLite.executeMany conn q args
-
-query
-  :: (MonadBaseControl IO m, SQLite.ToRow i, SQLite.FromRow o)
-  => Query i o -> i -> Connection -> m [o]
-query (Query qry) args conn = liftBase (SQLite.query conn qry args)
-
 -- Use a join on the module source table to get the path.
 -- getCachedBuildFromDatabase :: Build m => ResolvedModuleRef -> m (Maybe CachedBuild)
 -- getCachedBuildFromDatabase rmref = withConn (query error $ "getCachedBuildFromDatabase " <> show rmref
@@ -76,8 +62,8 @@ query (Query qry) args conn = liftBase (SQLite.query conn qry args)
 cacheBuildInDatabase :: Build m => ResolvedModuleRef -> CachedBuild -> m ()
 cacheBuildInDatabase _ _ = error $ "cacheBuildInDatabase"
 
-compileModule :: Build m => [ExternsFile] -> Module -> m ExternsFile
-compileModule externs modl = do
+compileModule :: Build m => [ExternsFile] -> Map ModuleName PackageRef -> Module -> m ExternsFile
+compileModule externs prefs modl= do
   -- let ffiCodegen m = do
   --         let mn = CF.moduleName m
   --             foreignFile = outputFilename mn "foreign.js"
@@ -97,7 +83,10 @@ compileModule externs modl = do
       -- specially when resolving them.
       withPrim = importPrim modl
       moduleName = getModuleName modl
-  when (renderModuleName moduleName == "Data.Show") $ do
+      pref = case M.lookup (getModuleName modl) prefs of
+        Just p -> p
+        Nothing -> internalError "incomplete package reference map"
+  when (renderModuleName moduleName == "Data.Unit") $ do
     traceM $ "Compiling " <> renderModuleName moduleName <> " with dependencies "
           <> show (map (renderModuleName . efModuleName) externs)
   lint withPrim
@@ -117,8 +106,8 @@ compileModule externs modl = do
       corefn = CF.moduleToCoreFn env' mod'
       optimized = CF.optimizeCoreFn corefn
       [renamed] = renameInModules [optimized]
-      exts = moduleToExternsFile mod' env'
-  traceM $ "Successfully compiled " <> renderModuleName moduleName
+      exts = moduleToExternsFile prefs mod' env'
+--  traceM $ "Successfully compiled " <> renderModuleName moduleName
   -- _ <- ffiCodegen renamed
   -- evalSupplyT nextVar' . codegen renamed env' . encode $ exts
   return exts
@@ -309,14 +298,14 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
           pure $ ModuleRecord path stamp rmrefs
 
         _ -> do
-          traceM $ "Recording dependencies of " <> renderRMR r
+          traceM $ "Recording dependencies of " <> prettyRMRef r
           -- No dependencies recorded in the database.
           stamp <- liftBase $ readStamp path
           source <- liftBase $ B8.readFile path
           imports <- parseModuleImports path source
           let importsWithoutPrims = filter (not . isPrim . mrName) imports
           resolvedImportAsyncs <- forConcurrently importsWithoutPrims $ \mref -> do
-            traceM $ "Resolving " <> renderRMR r <> " => " <> prettyModuleRef mref
+            traceM $ "Resolving " <> prettyRMRef r <> " => " <> prettyModuleRef mref
             -- Note that we're passing in the package ref of *this* module; i.e. the one
             -- currently being loaded. By adding this info we can unambiguously determine which
             -- package/module combo is the correct answer for this package.
@@ -346,11 +335,48 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
 -- | Given a resolved module reference, compile it into externs. This result is cached.
 buildResolvedModule
   :: forall m. Build m
-  => ResolvedModuleRef -> m (AsyncLoad m (ExternsFile, ExternsStamp))
+  => ResolvedModuleRef
+  -- Returns the compiled externs, a timestamp, and all imported
+  -- modules (for downstream packages to add)
+  -> m (AsyncLoad m CompilationArtifact)
 buildResolvedModule = loadAsync bvExternCompiles $ \rmref -> do
   -- Get dependencies from the record and recur on them first.
   ModuleRecord path modStamp depRefs <- getModuleRecord newTrace rmref >>= wait
-  deps :: [(ExternsFile, ExternsStamp)] <- forConcurrently depRefs (buildResolvedModule >=> wait)
+  deps :: [(ResolvedModuleRef, CompilationArtifact)] <- do
+    forConcurrently depRefs $ \r -> (r,) <$> (buildResolvedModule r >>= wait)
+  let
+    toNP (ResolvedModuleRef {..}) = (rmrPackageRef, rmrModuleName)
+    myDeps = M.fromList $ map (\(r, ca) -> (toNP r, caExterns ca)) deps
+    transitiveDeps = foldr M.union mempty $ map (caDeps . snd) deps
+    allDeps :: M.Map (PackageRef, ModuleName) ExternsFile = myDeps <> transitiveDeps
+
+    go
+      :: S.Set (PackageRef, ModuleName)
+      -> [(PackageRef, ModuleName, ExternsFile)]
+      -> PackageRef
+      -> ModuleName
+      -> ExternsFile
+      -> (S.Set (PackageRef, ModuleName), [(PackageRef, ModuleName, ExternsFile)])
+    go seen ordered pref mn (ef@ExternsFile {..})
+      -- TODO want to use packagename here or some other unique reference
+      | S.member (pref, mn) seen = (seen, ordered)
+      | otherwise = (S.insert (pref, mn) seen', (pref, mn, ef) : ordered')
+        where
+          imports :: [(PackageRef, ModuleName, ExternsFile)] = do
+            flip map (efImportedModules ef) $ \(p, m) -> do
+              case M.lookup (p, m) allDeps of
+                Nothing -> internalError "Incomplete module/package mapping"
+                Just externs -> (p, m, externs)
+          goTuple (pref, mn, ef) (seen, ordered) = go seen ordered pref mn ef
+          (seen', ordered') = foldr goTuple (seen, ordered) imports
+
+
+
+    depExts :: [ExternsFile] = snd $ do
+      let f ((pref, mn), ef) (seen, ordered) = go seen ordered pref mn ef
+      fmap (\(_, _, e) -> e) <$> foldr f (mempty, mempty) (M.toList allDeps)
+
+  traceM $ "Ordered deps of " <> prettyRMRef rmref <> ": " <> show (map (renderModuleName . efModuleName) depExts)
 
   -- Could get the externs and the timestamp in a single query. The
   -- advantage is one fewer query; the tradeoff is that if the
@@ -365,19 +391,22 @@ buildResolvedModule = loadAsync bvExternCompiles $ \rmref -> do
           Only result:_ -> pure $ Just (CachedBuild result extsStamp)
           _ -> internalError "Externs stamp recorded but no externs"
       _ -> pure Nothing
+
   case existing of
-    Just (CachedBuild (Just externs) stamp') -> pure (externs, stamp')
+    Just (CachedBuild (Just externs) stamp') -> do
+      pure $ CompilationArtifact externs stamp' allDeps
     -- Otherwise, rebuild the module, cache it and return the new stamp.
     _ -> do
       stamp' <- liftBase currentTime
       source <- liftBase $ B8.readFile path
       modl <- parseModule path source
-      exts <- Right <$> compileModule (map fst deps) modl
+      let prefMap = foldr (\(p, mn) -> M.insert mn p) mempty (M.keys allDeps)
+      exts <- Right <$> compileModule depExts prefMap modl
       let exts' = either (const Nothing) Just exts
       withConn (execute insertModuleExternsQ (exts', stamp', mId))
       case exts of
         Left err -> throwError err
-        Right externs -> pure (externs, stamp')
+        Right externs -> pure $ CompilationArtifact externs stamp' allDeps
 
 resolveEntryPoints :: forall m. Build m => m (NonEmpty (AsyncLoad m ResolvedModuleRef))
 resolveEntryPoints = do
@@ -395,7 +424,7 @@ resolveEntryPointDeps = do
     pure (rmref, record)
 
 buildEntryPoints
-  :: forall m. Build m => m (NonEmpty (ExternsFile, ExternsStamp))
+  :: forall m. Build m => m (NonEmpty CompilationArtifact)
 buildEntryPoints = do
   entryPoints <- bcEntryPoints . bvConfig <$> ask
   forM entryPoints $ \modName -> do

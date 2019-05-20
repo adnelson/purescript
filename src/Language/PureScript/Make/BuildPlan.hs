@@ -111,7 +111,7 @@ getDependenciesTrans plan moduleName deps = do
     -- Discover an ExternsFile's dependencies, and then return the ExternsFile.
     resolve ef = let modName = efModuleName ef in do
       modify (S.insert modName <$>)
-      mapM_ go (mrName <$> efImportedModuleRefs ef)
+      mapM_ go (snd <$> efImportedModules ef)
       modify (S.delete modName <$>)
 
     go :: ModuleName -> StateT (M.Map ModuleName ExternsFile, S.Set ModuleName) m ()
@@ -180,7 +180,7 @@ construct MakeActions{..} sorted graph dependencyExterns = do
     resolveDependencies :: ExternsFile -> StateT (M.Map ModuleName (Maybe ExternsFile)) m ()
     resolveDependencies externsFile = do
       traceM $ "resolving dependencies of " <> renderModuleName (efModuleName externsFile)
-      forM_ (mrName <$> efImportedModuleRefs externsFile) $ \case
+      forM_ (snd <$> efImportedModules externsFile) $ \case
         modName | C.isPrim modName -> pure () -- prim modules are automatically resolved
         modName -> M.lookup modName <$> get >>= \case
           Just (Just _) -> pure () -- already resolved

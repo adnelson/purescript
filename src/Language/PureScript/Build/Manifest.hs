@@ -155,6 +155,10 @@ getModuleExternsQ = "SELECT externs FROM module WHERE rowid = ?"
 getModuleDependsQ :: Query ModuleId (ModuleId, PackageRef, ModuleName)
 getModuleDependsQ = "SELECT * FROM module_depends_view WHERE mod_id = ?"
 
+-- Get dependencies of a module, as module IDs
+getModuleDependsIdQ :: Query ModuleId ModuleId
+getModuleDependsIdQ = "SELECT depends FROM module_depends WHERE module = ?"
+
 getPackageModulesFromIdQ :: Query PackageId (ModuleName, ModuleId)
 getPackageModulesFromIdQ = "TODO getPackageModulesFromIdQ"
 

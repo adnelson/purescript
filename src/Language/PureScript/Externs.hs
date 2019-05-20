@@ -12,7 +12,7 @@ module Language.PureScript.Externs
   , ExternsDeclaration(..)
   , moduleToExternsFile
   , applyExternsFileToEnvironment
-  , efImportedModuleRefs
+  , efImportedModules
   ) where
 
 import Prelude.Compat
@@ -33,11 +33,12 @@ import qualified Data.List.NonEmpty as NEL
 
 import Language.PureScript.AST
 import Language.PureScript.Crash
+import Language.PureScript.Constants (isPrim)
 import Language.PureScript.Environment
 import Language.PureScript.Kinds
-import Language.PureScript.Names
 import Language.PureScript.TypeClassDictionaries
 import Language.PureScript.Types
+import Language.PureScript.Package
 
 import Paths_purescript as Paths
 
@@ -70,16 +71,18 @@ instance FromField ExternsFile where
 -- | A module import in an externs file
 data ExternsImport = ExternsImport
   {
-  -- | The imported module (possibly with a package)
-    eiModule :: ModuleRef
+  -- | The package the import comes from (local or named)
+    eiPackage :: PackageRef
+  -- | The imported module name
+  , eiModule :: ModuleName
   -- | The import type: regular, qualified or hiding
   , eiImportType :: ImportDeclarationType
   -- | The imported-as name, for qualified imports
   , eiImportedAs :: Maybe ModuleName
   } deriving (Show)
 
-efImportedModuleRefs :: ExternsFile -> [ModuleRef]
-efImportedModuleRefs = map eiModule . efImports
+efImportedModules :: ExternsFile -> [(PackageRef, ModuleName)]
+efImportedModules = map (\ei -> (eiPackage ei, eiModule ei)) . efImports
 
 -- | A fixity declaration in an externs file
 data ExternsFixity = ExternsFixity
@@ -184,9 +187,9 @@ applyExternsFileToEnvironment ExternsFile{..} = flip (foldl' applyDecl) efDeclar
   qual = Qualified (Just efModuleName)
 
 -- | Generate an externs file for all declarations in a module
-moduleToExternsFile :: Module -> Environment -> ExternsFile
-moduleToExternsFile (Module _ _ _ _ Nothing) _ = internalError "moduleToExternsFile: module exports were not elaborated"
-moduleToExternsFile (Module ss _ mn ds (Just exps)) env = ExternsFile{..}
+moduleToExternsFile :: M.Map ModuleName PackageRef -> Module -> Environment -> ExternsFile
+moduleToExternsFile prefs (Module _ _ _ _ Nothing) _ = internalError "moduleToExternsFile: module exports were not elaborated"
+moduleToExternsFile prefs (Module ss _ mn ds (Just exps)) env = ExternsFile{..}
   where
   efVersion       = T.pack (showVersion Paths.version)
   efModuleName    = mn
@@ -211,7 +214,10 @@ moduleToExternsFile (Module ss _ mn ds (Just exps)) env = ExternsFile{..}
   findOp g op = maybe False (== op) . g
 
   importDecl :: Declaration -> Maybe ExternsImport
-  importDecl (ImportDeclaration _ m mt qmn) = Just (ExternsImport m mt qmn)
+  importDecl (ImportDeclaration _ (ModuleRef _ m) mt qmn) | not (isPrim m) = case M.lookup m prefs of
+    Nothing -> internalError $ "Failed to resolve import of " <> renderModuleName m
+                          <> ", imported by " <> renderModuleName mn
+    Just p -> Just (ExternsImport p m mt qmn)
   importDecl _ = Nothing
 
   toExternsDeclaration :: DeclarationRef -> [ExternsDeclaration]
