@@ -52,28 +52,25 @@ resolveImports env modl@(Module ss coms currentModule decls exps) =
         imports' = M.map (map (\(ss', dt, mmn) -> (ss', Just dt, mmn))) imports
         internalSpan = internalModuleSourceSpan "<module>"
         scope = M.insert currentModule [(internalSpan, Nothing, Nothing)] imports'
-    (modl,) <$> foldM (resolveModuleImport "" env) nullImports (M.toList scope)
+    (modl,) <$> foldM (resolveModuleImport env) nullImports (M.toList scope)
 
 -- | Constructs a set of imports for a single module import.
 resolveModuleImport
   :: forall m
    . MonadError MultipleErrors m
-  => String
-  -> Env
+  => Env
   -> Imports
   -> (ModuleName, [(SourceSpan, Maybe ImportDeclarationType, Maybe ModuleName)])
   -> m Imports
-resolveModuleImport mname env ie (mn, imps) = foldM go ie imps
+resolveModuleImport env ie (mn, imps) = foldM go ie imps
   where
   go :: Imports
      -> (SourceSpan, Maybe ImportDeclarationType, Maybe ModuleName)
      -> m Imports
   go ie' (ss, typ, impQual) = do
-    when (mname == "Data.Unit") $ do
-      traceM $ "resolveModuleImport, " <> mname <> " importing " <> renderModuleName mn
     modExports <-
       maybe
-        (throwError . errorMessage' ss $ error (mname <> " => " <> renderModuleName mn)) -- error ("Module " <> renderModuleName mn <> " not found?? " <> show (map renderModuleName $ M.keys env))) -- ModuleNotFound mn)
+        (throwError . errorMessage' ss $ ModuleNotFound mn)
         (return . envModuleExports)
         (mn `M.lookup` env)
     let impModules = importedModules ie'

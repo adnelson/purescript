@@ -56,8 +56,6 @@ desugarImportsWithEnv
   -> [Module]
   -> m (Env, [Module])
 desugarImportsWithEnv externs modules = do
-  when ((renderModuleName . getModuleName <$> modules) == ["Data.Unit"]) $ do
-    traceM $ "Desugaring imports of " <> mn' <> " with externs " <> show (map (renderModuleName . efModuleName) externs)
   env <- silence $ foldM externsEnv primEnv externs
   (modules', env') <- first reverse <$> foldM updateEnv ([], env) modules
   (env',) <$> traverse (renameInModule' env') modules'
@@ -81,11 +79,7 @@ desugarImportsWithEnv externs modules = do
         fromEFImport (ExternsImport _ mname mt qmn) = (mname, [(efSourceSpan, Just mt, qmn)])
     let envKeys :: [ModuleName] = M.keys env'
         envModNames = filter (not . isPrefixOf "Prim") (map renderModuleName envKeys)
-    when (mn' == "Data.Unit") $
-      traceM $ "Desugar imports of " <> mn' <> ": variables " <> show envModNames
-            <> " externs of " <> renderModuleName efModuleName
-            <> " imports " <> show (map (renderModuleName . eiModule) efImports)
-    imps <- foldM (resolveModuleImport mn' env') nullImports (map fromEFImport efImports)
+    imps <- foldM (resolveModuleImport env') nullImports (map fromEFImport efImports)
     exps <- resolveExports env' efSourceSpan efModuleName imps members efExports
     return $ M.insert efModuleName (efSourceSpan, imps, exps) env
     where

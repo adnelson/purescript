@@ -305,7 +305,6 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
           imports <- parseModuleImports path source
           let importsWithoutPrims = filter (not . isPrim . mrName) imports
           resolvedImportAsyncs <- forConcurrently importsWithoutPrims $ \mref -> do
-            traceM $ "Resolving " <> prettyRMRef r <> " => " <> prettyModuleRef mref
             -- Note that we're passing in the package ref of *this* module; i.e. the one
             -- currently being loaded. By adding this info we can unambiguously determine which
             -- package/module combo is the correct answer for this package.
@@ -370,13 +369,11 @@ buildResolvedModule = loadAsync bvExternCompiles $ \rmref -> do
           goTuple (pref, mn, ef) (seen, ordered) = go seen ordered pref mn ef
           (seen', ordered') = foldr goTuple (seen, ordered) imports
 
-
-
-    depExts :: [ExternsFile] = snd $ do
+    depExts :: [ExternsFile] = reverse $ snd $ do
       let f ((pref, mn), ef) (seen, ordered) = go seen ordered pref mn ef
       fmap (\(_, _, e) -> e) <$> foldr f (mempty, mempty) (M.toList allDeps)
 
-  traceM $ "Ordered deps of " <> prettyRMRef rmref <> ": " <> show (map (renderModuleName . efModuleName) depExts)
+--   traceM $ "Ordered deps of " <> prettyRMRef rmref <> ": " <> show (map (renderModuleName . efModuleName) depExts)
 
   -- Could get the externs and the timestamp in a single query. The
   -- advantage is one fewer query; the tradeoff is that if the
@@ -436,8 +433,8 @@ initBuild :: MonadBaseControl IO m => BuildConfig -> m (BuildVars (Builder m))
 initBuild bvConfig@(BuildConfig {..}) = liftBase $ do
   D.createDirectoryIfMissing True bcOutput
   -- TEMP
-  whenM (D.doesFileExist (bcOutput </> manifestFileName)) $
-    D.removeFile (bcOutput </> manifestFileName)
+--  whenM (D.doesFileExist (bcOutput </> manifestFileName)) $
+--    D.removeFile (bcOutput </> manifestFileName)
   conn <- SQLite.open (bcOutput </> manifestFileName)
   -- Create tables
   let execute_ (Query q) = SQLite.execute_ conn q
