@@ -98,7 +98,8 @@ newtype Hash (a :: HasStamp) = Hash { unHash :: B8.ByteString }
 type PackageHash = Hash 'Pkg
 
 newtype Stamp (a :: HasStamp) = Stamp {tStamp :: UTCTime}
-  deriving (Show, Eq, Ord, FromField, ToField, ToJSON, FromJSON)
+  deriving (Eq, Ord, FromField, ToField, ToJSON, FromJSON)
+instance Show (Stamp a) where show (Stamp s) = show s
 instance Semigroup (Stamp a) where (<>) = max
 
 isUpToDateAgainst :: Stamp a -> Stamp b -> Bool

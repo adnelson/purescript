@@ -17,6 +17,7 @@ import Prelude.Compat
 import Protolude (forM, ordNub, when, whenM, throwError)
 import System.FilePath ((</>))
 import Debug.Trace (traceM)
+import Data.Either (isLeft)
 import Control.Concurrent.Async.Lifted
 import Control.Concurrent.MVar.Lifted
 import qualified Data.ByteString.Char8 as B8
@@ -150,7 +151,6 @@ resolveModuleRef
   :: forall m. Build m
   => PackageRef -> ModuleRef -> m (AsyncLoad m ResolvedModuleRef)
 resolveModuleRef = curry $ loadAsync bvResolvedMods $ \(pref, mr@(ModuleRef mPkg name)) -> do
-  traceM $ "Resolving module ref " <> prettyModuleRef mr
   case mPkg of
     Just pname -> do
       traceM $ prettyModuleRef mr <> " has a specific package reference"
@@ -165,7 +165,8 @@ resolveModuleRef = curry $ loadAsync bvResolvedMods $ \(pref, mr@(ModuleRef mPkg
       case M.lookup name pkgModules of
         Just mid -> pure $ ResolvedModuleRef mid pref name
         Nothing -> do
-          traceM $ prettyModuleRef mr <> " was not found in " <> prettyPackageRef pref
+          traceM $ "Searching for module ref " <> prettyModuleRef mr
+--          traceM $ prettyModuleRef mr <> " was not found in " <> prettyPackageRef pref
           -- It wasn't found in the package. Load other packages, then
           -- check if there's an unambiguous module with that name.
           depNames <- asks (bcDependentPackages . bvConfig)
@@ -254,7 +255,7 @@ getModuleRecord
   :: forall m. Build m => ModuleTrace -> ResolvedModuleRef -> m (AsyncLoad m ModuleRecord)
 getModuleRecord trace = loadAsync bvModuleRecords getRecord where
   getRecord :: ResolvedModuleRef -> m ModuleRecord
-  getRecord (r@(ResolvedModuleRef mId pref _)) = case checkCycle r trace of
+  getRecord (r@(ResolvedModuleRef mId pref mname)) = case checkCycle r trace of
     -- Cycle detection. TODO incorporate packages into trace
     Just pkgs -> do
       throwSimpleError $ CycleInModules (map (someModuleNamed . rmrModuleName) pkgs)
@@ -263,19 +264,21 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
       -- See if it's in the database; if so it will have a hash and timestamp.
       (withConn (query getModuleStampQ mId) :: m [Only (Maybe ModuleStamp)]) >>= \case
         (Only (Just mstamp)):_ -> do
-          traceM $ "Found timestamp " <> show mstamp <> " for " <> show r
+--          traceM $ "Found timestamp " <> show mstamp <> " for " <> prettyRMRef r
           -- There's an entry in the database. But is it up-to-date? First check the timestamp.
           (latestStamp, maybeSource) <- liftBase $ refreshStamp mstamp path
+
           depRefs :: Either [ModuleRef] [ResolvedModuleRef] <- case maybeSource of
             -- There's a new file; we need to reparse.
-            Just source -> Left <$> parseModuleImports path source
+            Just source -> do
+              traceM $ "Parsing imports of " <> renderModuleName mname
+              Left <$> parseModuleImports path source
             -- If it hasn't changed, then we can reuse the same dependency list from before.
             Nothing -> Right <$> do
+              traceM $ "Loading cached dependency list of " <> renderModuleName mname
               rows <- withConn (query getModuleDependsQ mId)
               pure $ flip map rows $ \(rmrModuleId, rmrPackageRef, rmrModuleName) -> do
                 ResolvedModuleRef {..}
-
-          traceM $ "Dependency refs: " <> show depRefs
 
           rmrefs <- case depRefs of
             -- Already resolved: return as-is
@@ -290,10 +293,14 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
 
           -- Compute the hash off of dependencies
           let stamp = foldr (<>) latestStamp (mrStamp <$> depRecords)
-          withConn $ \conn -> do
-            execute insertModuleStampQ (stamp, mId) conn
-            let rows = flip map rmrefs $ \dep -> (mId, rmrModuleId dep)
-            executeMany insertModuleDependsQ rows conn
+
+          -- If we are (re)loading, store in the database
+          when (isLeft depRefs) $ do
+            withConn $ \conn -> do
+              execute insertModuleStampQ (stamp, mId) conn
+              execute removeModuleDependsQ mId conn -- in case it is being re-loaded
+              let rows = flip map rmrefs $ \dep -> (mId, rmrModuleId dep)
+              executeMany insertModuleDependsQ rows conn
 
           pure $ ModuleRecord path stamp rmrefs
 
@@ -432,9 +439,9 @@ buildEntryPoints = do
 initBuild :: MonadBaseControl IO m => BuildConfig -> m (BuildVars (Builder m))
 initBuild bvConfig@(BuildConfig {..}) = liftBase $ do
   D.createDirectoryIfMissing True bcOutput
-  -- TEMP
---  whenM (D.doesFileExist (bcOutput </> manifestFileName)) $
---    D.removeFile (bcOutput </> manifestFileName)
+  -- Uncomment these lines to remove the database
+  when bcFromFreshManifest $ do
+    D.removeFile (bcOutput </> manifestFileName)
   conn <- SQLite.open (bcOutput </> manifestFileName)
   -- Create tables
   let execute_ (Query q) = SQLite.execute_ conn q

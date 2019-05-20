@@ -27,8 +27,6 @@ createPackageTableQ = fromString [r|
 CREATE TABLE IF NOT EXISTS package (
   -- Name of the package. An empty string refers to the current package.
   name TEXT NOT NULL UNIQUE,
-  -- TODO other table. Package signature, made of the hashes of all its modules.
-  -- hash BLOB NOT NULL,
   -- Path to root source directory (optional)
   root TEXT NOT NULL
 );
@@ -67,9 +65,13 @@ CREATE TABLE IF NOT EXISTS module_depends (
 
 createModuleDependsViewQ :: Query () ()
 createModuleDependsViewQ = fromString [r|
-CREATE VIEW IF NOT EXISTS module_depends_view
-AS SELECT module as mod_id, dep_mod.rowid, dep_pkg.name, dep_mod.name
-FROM module_depends
+CREATE VIEW IF NOT EXISTS module_depends_view AS
+SELECT
+  md.module as mod_id,
+  dep_mod.rowid as dep_id,
+  dep_pkg.name as dep_pkg,
+  dep_mod.name as dep_name
+FROM module_depends as md
 INNER JOIN module as dep_mod ON depends = dep_mod.rowid
 INNER JOIN package as dep_pkg ON dep_mod.package = dep_pkg.rowid
 |]
@@ -114,7 +116,7 @@ INNER JOIN package_module AS pmm ON pmm.module = module.rowid
 INNER JOIN package ON pmm.package = package.rowid;
 |];
 
------------------ INSERTS
+----------------- MODIFYING OPERATIONS
 
 
 insertModuleQ :: Query (PackageRef, ModuleName) ()
@@ -137,6 +139,9 @@ insertPackageQ = "INSERT INTO package (name, root) VALUES (?, ?)"
 insertModuleExternsQ :: Query (Maybe ExternsFile, ExternsStamp, ModuleId) ()
 insertModuleExternsQ = "UPDATE module SET externs = ?, externs_stamp = ? WHERE rowid = ?"
 
+removeModuleDependsQ :: Query ModuleId ()
+removeModuleDependsQ = "DELETE FROM module_depends WHERE module = ?"
+
 ----------------- GETS
 
 -- Get the dependency list meta (TODO rename this, maybe modulesignature?)
@@ -153,23 +158,20 @@ getModuleExternsQ = "SELECT externs FROM module WHERE rowid = ?"
 
 -- Get dependencies of a module (enough to construct a ResolvedModuleRef)
 getModuleDependsQ :: Query ModuleId (ModuleId, PackageRef, ModuleName)
-getModuleDependsQ = "SELECT * FROM module_depends_view WHERE mod_id = ?"
+getModuleDependsQ = "SELECT dep_id, dep_pkg, dep_name FROM module_depends_view WHERE mod_id = ?"
 
 -- Get dependencies of a module, as module IDs
 getModuleDependsIdQ :: Query ModuleId ModuleId
 getModuleDependsIdQ = "SELECT depends FROM module_depends WHERE module = ?"
 
 getPackageModulesFromIdQ :: Query PackageId (ModuleName, ModuleId)
-getPackageModulesFromIdQ = "TODO getPackageModulesFromIdQ"
+getPackageModulesFromIdQ = "SELECT name, rowid FROM module WHERE package = ?"
 
 getPackageModulesQ :: Query (Only PackageRef) (ModuleName, ModuleId)
 getPackageModulesQ = fromString [r|
 SELECT name, rowid FROM module
 WHERE package = (SELECT rowid FROM package WHERE name = ?)
 |]
-
-getPackageRootQ :: Query PackageId (Only FilePath)
-getPackageRootQ = "TODO getPackageRootQ"
 
 getPackageIdQ :: Query (Only PackageRef) (PackageId, FilePath)
 getPackageIdQ = "SELECT rowid, root FROM package WHERE name = ?"
