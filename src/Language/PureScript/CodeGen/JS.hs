@@ -162,7 +162,7 @@ moduleToJs (Module _ coms mn _ imps exps foreigns decls) foreign_ =
 
   withPos :: SourceSpan -> AST -> m AST
   withPos ss js = do
-    withSM <- asks (elem JSSourceMap . optionsCodegenTargets)
+    withSM <- asks optionsSourceMaps
     return $ if withSM
       then withSourceSpan ss js
       else js

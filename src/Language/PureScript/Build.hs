@@ -22,6 +22,7 @@ import Control.Concurrent.Async.Lifted
 import Control.Concurrent.MVar.Lifted
 import qualified Data.ByteString.Char8 as B8
 import qualified System.Directory as D
+import Control.Monad.Writer
 
 import Database.SQLite.Simple (Connection, Only(..))
 import Data.List.NonEmpty (NonEmpty)
@@ -42,13 +43,14 @@ import Language.PureScript.Crash (internalError)
 import Language.PureScript.Constants (isPrim)
 import Language.PureScript.Names
 import Language.PureScript.AST
-import Language.PureScript.Errors (throwSimpleError)
+import Language.PureScript.Errors (throwSimpleError, errorMessage')
 import qualified Language.PureScript.CoreFn as CF
 import Language.PureScript.Environment
 import Language.PureScript.Externs
 import Language.PureScript.Linter
+import qualified Language.PureScript.Make.Actions as MA
 import qualified Language.PureScript.Parser as P
-import Language.PureScript.Renamer (renameInModules)
+import Language.PureScript.Renamer (renameInModules, renameInModule)
 import Language.PureScript.Sugar (desugar, desugarCaseGuards, createBindingGroups, collapseBindingGroups)
 import Language.PureScript.TypeChecker
 import Language.PureScript.Build.Search
@@ -63,20 +65,15 @@ import Language.PureScript.Build.Monad
 cacheBuildInDatabase :: Build m => ResolvedModuleRef -> CachedBuild -> m ()
 cacheBuildInDatabase _ _ = error $ "cacheBuildInDatabase"
 
-compileModule :: Build m => [ExternsFile] -> Map ModuleName PackageRef -> Module -> m ExternsFile
-compileModule externs prefs modl= do
-  -- let ffiCodegen m = do
-  --         let mn = CF.moduleName m
-  --             foreignFile = outputFilename mn "foreign.js"
-  --         case mn `M.lookup` foreigns of
-  --           Just path
-  --             | not $ requiresForeign m ->
-  --                 tell $ errorMessage' (CF.moduleSourceSpan m) $ UnnecessaryFFIModule mn path
-  --             | otherwise ->
-  --                 checkForeignDecls m path
-  --           Nothing | requiresForeign m -> throwError . errorMessage' (CF.moduleSourceSpan m) $ MissingFFIModule mn
-  --                   | otherwise -> return ()
-  --         for_ (mn `M.lookup` foreigns) (readTextFile >=> writeTextFile foreignFile)
+compileModule
+  :: Build m
+  => [ExternsFile]
+  -> Map ModuleName PackageRef
+  -> Module
+  -> Maybe FilePath
+  -> m ExternsFile
+compileModule externs prefs modl maybeForeignPath = do
+  traceM $ "Compiling " <> renderModuleName (getModuleName modl)
   let env = foldl' (flip applyExternsFileToEnvironment) initEnvironment externs
       -- This adds `import Prim` and `import qualified Prim` to the
       -- module. Is this really necessary? It seems redundant and
@@ -84,12 +81,8 @@ compileModule externs prefs modl= do
       -- specially when resolving them.
       withPrim = importPrim modl
       moduleName = getModuleName modl
-      pref = case M.lookup (getModuleName modl) prefs of
-        Just p -> p
-        Nothing -> internalError "incomplete package reference map"
-  when (renderModuleName moduleName == "Data.Unit") $ do
-    traceM $ "Compiling " <> renderModuleName moduleName <> " with dependencies "
-          <> show (map (renderModuleName . efModuleName) externs)
+  traceM $ "Compiling " <> renderModuleName moduleName <> " with dependencies "
+        <> show (map (renderModuleName . efModuleName) externs)
   lint withPrim
   ((Module ss coms _ elaborated exps, env'), nextVar) <- runSupplyT 0 $ do
     desugar externs [withPrim] >>= \case
@@ -99,18 +92,29 @@ compileModule externs prefs modl= do
   -- desugar case declarations *after* type- and exhaustiveness checking
   -- since pattern guards introduces cases which the exhaustiveness checker
   -- reports as not-exhaustive.
-  (deguarded, _) <- runSupplyT nextVar $ desugarCaseGuards elaborated
+  (deguarded, nextVar') <- runSupplyT nextVar $ desugarCaseGuards elaborated
 
 
   regrouped <- createBindingGroups moduleName . collapseBindingGroups $ deguarded
   let mod' = Module ss coms moduleName regrouped exps
       corefn = CF.moduleToCoreFn env' mod'
       optimized = CF.optimizeCoreFn corefn
-      [renamed] = renameInModules [optimized]
+      finalCoreModule = renameInModule optimized
+      requiresForeign = not $ null $ CF.moduleForeign finalCoreModule
       exts = moduleToExternsFile prefs mod' env'
---  traceM $ "Successfully compiled " <> renderModuleName moduleName
-  -- _ <- ffiCodegen renamed
-  -- evalSupplyT nextVar' . codegen renamed env' . encode $ exts
+
+  -- Check that FFI files are provided if needed
+  let toError = errorMessage' (CF.moduleSourceSpan finalCoreModule)
+  case (maybeForeignPath, CF.moduleForeign finalCoreModule) of
+    (Just path, []) -> tell $ toError $ UnnecessaryFFIModule moduleName path
+    (Nothing, _:_) -> throwError $ toError $ MissingFFIModule moduleName
+    (Just path, _:_) -> MA.checkForeignDecls optimized path
+    _ -> pure ()
+
+  -- Generate the javascript
+  output <- getConfig bcOutput
+  options <- getConfig bcCompilerOptions
+  -- codegen options (output </> renderModuleName moduleName) finalCoreModule maybeForeignPath
   return exts
 
 parseModule :: Build m => FilePath -> B8.ByteString -> m Module
@@ -405,7 +409,12 @@ buildResolvedModule = loadAsync bvExternCompiles $ \rmref -> do
       source <- liftBase $ B8.readFile path
       modl <- parseModule path source
       let prefMap = foldr (\(p, mn) -> M.insert mn p) mempty (M.keys allDeps)
-      exts <- Right <$> compileModule depExts prefMap modl
+      let expectedFrnPath = (reverse $ drop 5 $ reverse path) <> ".js"
+      traceM $ "Checking for foreigns file at " <> expectedFrnPath
+      frnPath <- liftBase (D.doesFileExist expectedFrnPath) >>= \case
+        True -> pure $ Just expectedFrnPath
+        False -> pure Nothing
+      exts <- Right <$> compileModule depExts prefMap modl frnPath
       let exts' = either (const Nothing) Just exts
       withConn (execute insertModuleExternsQ (exts', stamp', mId))
       case exts of

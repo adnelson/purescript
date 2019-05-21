@@ -1,7 +1,7 @@
 -- |
 -- Renaming pass that prevents shadowing of local identifiers.
 --
-module Language.PureScript.Renamer (renameInModules) where
+module Language.PureScript.Renamer (renameInModules, renameInModule) where
 
 import Prelude.Compat
 
@@ -106,11 +106,12 @@ findDeclIdents = concatMap go
 -- Renames within each declaration in a module.
 --
 renameInModules :: [Module Ann] -> [Module Ann]
-renameInModules = map go
-  where
-  go :: Module Ann -> Module Ann
-  go m@(Module _ _ _ _ _ _ _ decls) = m { moduleDecls = map (renameInDecl' (findDeclIdents decls)) decls }
+renameInModules = map renameInModule
 
+renameInModule :: Module Ann -> Module Ann
+renameInModule m@(Module _ _ _ _ _ _ _ decls) =
+  m { moduleDecls = map (renameInDecl' (findDeclIdents decls)) decls }
+  where
   renameInDecl' :: [Ident] -> Bind Ann -> Bind Ann
   renameInDecl' scope = runRename scope . renameInDecl True
 
