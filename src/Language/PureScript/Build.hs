@@ -264,82 +264,86 @@ getModuleRecord trace = loadAsync bvModuleRecords getRecord where
     Just pkgs -> do
       throwSimpleError $ CycleInModules (map (someModuleNamed . rmrModuleName) pkgs)
     Nothing -> do
+      -- Get path to the module and latest timestamps (including
+      -- foreign if one exists). We'll have to do this regardless of
+      -- whether we have a cached version in the database.
       path <- getSourcePath r
-      -- See if it's in the database; if so it will have a hash and timestamp.
-      (withConn (query getModuleStampQ mId) :: m [Only (Maybe ModuleStamp)]) >>= \case
-        (Only (Just mstamp)):_ -> do
---          traceM $ "Found timestamp " <> show mstamp <> " for " <> prettyRMRef r
-          -- There's an entry in the database. But is it up-to-date? First check the timestamp.
-          (latestStamp, maybeSource) <- liftBase $ refreshStamp mstamp path
+      modStamp <- liftBase $ readStamp path
+      let frnPath = (reverse $ drop 5 $ reverse path) <> ".js"
+      (latestStamp, frn) <- liftBase (D.doesFileExist frnPath) >>= \case
+        True -> do
+          traceM $ "Found foreigns file at " <> frnPath
+          frnStamp <- liftBase $ readStamp frnPath
+          pure (max frnStamp modStamp, Just frnPath)
+        False -> pure (modStamp, Nothing)
 
-          depRefs :: Either [ModuleRef] [ResolvedModuleRef] <- case maybeSource of
-            -- There's a new file; we need to reparse.
-            Just source -> do
-              traceM $ "Parsing imports of " <> renderModuleName mname
-              Left <$> parseModuleImports path source
-            -- If it hasn't changed, then we can reuse the same dependency list from before.
-            Nothing -> Right <$> do
-              traceM $ "Loading cached dependency list of " <> renderModuleName mname
-              rows <- withConn (query getModuleDependsQ mId)
-              pure $ flip map rows $ \(rmrModuleId, rmrPackageRef, rmrModuleName) -> do
-                ResolvedModuleRef {..}
+      -- See if it's in the database; if so it will have a timestamp.
+      (wasNew, depRefs :: [ResolvedModuleRef]) <- do
+        withConn (query getModuleStampQ mId) >>= \case
+          -- If there's an entry in the database, check if it is up-to-date
+          (Only (Just s)):_ | s `isUpToDateAgainst` modStamp -> (False,) <$> do
+            traceM $ "Loading cached dependency list of " <> renderModuleName mname
+            rows <- withConn (query getModuleDependsQ mId)
+            pure $ flip map rows $ \(mid, pref, mn) -> ResolvedModuleRef mid pref mn
+          _ -> (True,) <$> do
+            -- The file changed or there was no cached version; we
+            -- need to get the latest import list from the file.
+            source <- liftBase $ B8.readFile path
+            traceM $ "Parsing imports of " <> renderModuleName mname
+            importRefs <- parseModuleImports path source
+            -- Resolve these module references
+            forM importRefs (resolveModuleRef pref) >>= mapM wait
 
-          rmrefs <- case depRefs of
-            -- Already resolved: return as-is
-            Right rmrefs -> pure rmrefs
-            -- Load unresolved references
-            Left unresolved -> forConcurrently unresolved $ resolveModuleRef pref >=> wait
+      -- Recur on dependencies
+      depRecords :: [ModuleRecord] <- do
+        asyncs <- forM depRefs $ getModuleRecord (pushTrace r trace)
+        mapM wait asyncs
 
-          -- Recur on these dependencies
-          depRecords :: [ModuleRecord] <- do
-            asyncs <- forM rmrefs $ getModuleRecord (pushTrace r trace)
-            mapM wait asyncs
+      -- Get the most recent timestamp, including among dependencies
+      let stamp = foldr (<>) latestStamp (mrStamp <$> depRecords)
 
-          -- Compute the hash off of dependencies
-          let stamp = foldr (<>) latestStamp (mrStamp <$> depRecords)
+      -- If we are (re)loading, store in the database
+      when wasNew $ do
+        withConn $ \conn -> do
+          execute insertModuleStampQ (stamp, mId) conn
+          execute removeModuleDependsQ mId conn -- in case it is being re-loaded
+          let rows = flip map depRefs $ \dep -> (mId, rmrModuleId dep)
+          executeMany insertModuleDependsQ rows conn
 
-          -- If we are (re)loading, store in the database
-          when (isLeft depRefs) $ do
-            withConn $ \conn -> do
-              execute insertModuleStampQ (stamp, mId) conn
-              execute removeModuleDependsQ mId conn -- in case it is being re-loaded
-              let rows = flip map rmrefs $ \dep -> (mId, rmrModuleId dep)
-              executeMany insertModuleDependsQ rows conn
+      pure $ ModuleRecord path frn stamp depRefs
 
-          pure $ ModuleRecord path stamp rmrefs
+--         -- TODO: DRY up the logic shared with the code block above
+--         _ -> do
+--           traceM $ "Recording dependencies of " <> prettyRMRef r
+--           -- No dependencies recorded in the database.
+--           source <- liftBase $ B8.readFile path
+--           imports <- parseModuleImports path source
+--           let importsWithoutPrims = filter (not . isPrim . mrName) imports
+--           resolvedImportAsyncs <- forConcurrently importsWithoutPrims $ \mref -> do
+--             -- Note that we're passing in the package ref of *this* module; i.e. the one
+--             -- currently being loaded. By adding this info we can unambiguously determine which
+--             -- package/module combo is the correct answer for this package.
+--             rmref :: ResolvedModuleRef <- do
+--               resolveModuleRef (rmrPackageRef r) mref >>= wait
+--             (rmref,) <$> getModuleRecord (pushTrace r trace) rmref
 
-        _ -> do
-          traceM $ "Recording dependencies of " <> prettyRMRef r
-          -- No dependencies recorded in the database.
-          stamp <- liftBase $ readStamp path
-          source <- liftBase $ B8.readFile path
-          imports <- parseModuleImports path source
-          let importsWithoutPrims = filter (not . isPrim . mrName) imports
-          resolvedImportAsyncs <- forConcurrently importsWithoutPrims $ \mref -> do
-            -- Note that we're passing in the package ref of *this* module; i.e. the one
-            -- currently being loaded. By adding this info we can unambiguously determine which
-            -- package/module combo is the correct answer for this package.
-            rmref :: ResolvedModuleRef <- do
-              resolveModuleRef (rmrPackageRef r) mref >>= wait
-            (rmref,) <$> getModuleRecord (pushTrace r trace) rmref
+-- --          traceM $ "2"
+--           depInfos :: [(ResolvedModuleRef, ModuleRecord)] <- do
+--             forM resolvedImportAsyncs $ \(rmref, a) -> do
+--               recd :: ModuleRecord <- wait a
+--               pure (rmref, recd)
 
---          traceM $ "2"
-          depInfos :: [(ResolvedModuleRef, ModuleRecord)] <- do
-            forM resolvedImportAsyncs $ \(rmref, a) -> do
-              recd :: ModuleRecord <- wait a
-              pure (rmref, recd)
+--           let depStamps = map (mrStamp . snd) depInfos
+--           let stamp' = foldr (<>) stamp depStamps
 
-          let depStamps = map (mrStamp . snd) depInfos
-          let stamp' = foldr (<>) stamp depStamps
+-- --          traceM $ "3"
+--           withConn $ \conn -> do
+--             -- Create a module dependency list
+--             execute insertModuleStampQ (stamp', mId) conn
+--             let depIds = map (rmrModuleId . fst) depInfos
+--             executeMany insertModuleDependsQ ((mId,) <$> depIds) conn
 
---          traceM $ "3"
-          withConn $ \conn -> do
-            -- Create a module dependency list
-            execute insertModuleStampQ (stamp', mId) conn
-            let depIds = map (rmrModuleId . fst) depInfos
-            executeMany insertModuleDependsQ ((mId,) <$> depIds) conn
-
-          pure $ ModuleRecord path stamp (map fst resolvedImportAsyncs)
+--           pure $ ModuleRecord path stamp (map fst resolvedImportAsyncs)
 
 
 -- | Given a resolved module reference, compile it into externs. This result is cached.
@@ -351,7 +355,7 @@ buildResolvedModule
   -> m (AsyncLoad m CompilationArtifact)
 buildResolvedModule = loadAsync bvExternCompiles $ \rmref -> do
   -- Get dependencies from the record and recur on them first.
-  ModuleRecord path modStamp depRefs <- getModuleRecord newTrace rmref >>= wait
+  ModuleRecord path frn modStamp depRefs <- getModuleRecord newTrace rmref >>= wait
   deps :: [(ResolvedModuleRef, CompilationArtifact)] <- do
     forConcurrently depRefs $ \r -> (r,) <$> (buildResolvedModule r >>= wait)
   let
@@ -384,8 +388,6 @@ buildResolvedModule = loadAsync bvExternCompiles $ \rmref -> do
       let f ((pref, mn), ef) (seen, ordered) = go seen ordered pref mn ef
       fmap (\(_, _, e) -> e) <$> foldr f (mempty, mempty) (M.toList allDeps)
 
---   traceM $ "Ordered deps of " <> prettyRMRef rmref <> ": " <> show (map (renderModuleName . efModuleName) depExts)
-
   -- Could get the externs and the timestamp in a single query. The
   -- advantage is one fewer query; the tradeoff is that if the
   -- timestamp is out of date, we waste time parsing the externs,
@@ -409,12 +411,7 @@ buildResolvedModule = loadAsync bvExternCompiles $ \rmref -> do
       source <- liftBase $ B8.readFile path
       modl <- parseModule path source
       let prefMap = foldr (\(p, mn) -> M.insert mn p) mempty (M.keys allDeps)
-      let expectedFrnPath = (reverse $ drop 5 $ reverse path) <> ".js"
-      traceM $ "Checking for foreigns file at " <> expectedFrnPath
-      frnPath <- liftBase (D.doesFileExist expectedFrnPath) >>= \case
-        True -> pure $ Just expectedFrnPath
-        False -> pure Nothing
-      exts <- Right <$> compileModule depExts prefMap modl frnPath
+      exts <- Right <$> compileModule depExts prefMap modl frn
       let exts' = either (const Nothing) Just exts
       withConn (execute insertModuleExternsQ (exts', stamp', mId))
       case exts of

@@ -140,6 +140,7 @@ refreshStamp stamp path = do
 
 data ModuleRecord = ModuleRecord {
   mrPath :: FilePath,
+  mrForeign :: Maybe FilePath,
   mrStamp :: !(Stamp 'Mod),
   mrDeps :: [ResolvedModuleRef]
   } deriving (Generic)
