@@ -39,8 +39,10 @@ CREATE TABLE IF NOT EXISTS module (
   package INT NOT NULL,
   -- Name of the module. E.g. 'Data.Foo'
   name TEXT NOT NULL,
-  -- TODO: Path to the source code file, to support nonstandard module paths
-  -- path TEXT UNIQUE NOT NULL,
+  -- Path to the source code file.
+  path TEXT UNIQUE,
+  -- Path to a foreigns file. Null if none found.
+  foreigns_path TEXT UNIQUE,
   -- Latest recorded timestamp of the file path. Null if not yet loaded.
   file_stamp TEXT,
   -- Latest recorded compilation timestamp. Null if not yet compiled.
@@ -119,11 +121,11 @@ INNER JOIN package ON pmm.package = package.rowid;
 ----------------- MODIFYING OPERATIONS
 
 
-insertModuleQ :: Query (PackageRef, ModuleName) ()
+insertModuleQ :: Query (PackageRef, ModuleName, FilePath, Maybe FilePath) ()
 insertModuleQ = fromString [r|
-INSERT INTO module (package, name) VALUES (
+INSERT INTO module (package, name, path, foreigns_path) VALUES (
   (SELECT rowid FROM package WHERE package.name = ?),
-  ?
+  ?, ?, ?
 )
 |]
 
@@ -144,9 +146,13 @@ removeModuleDependsQ = "DELETE FROM module_depends WHERE module = ?"
 
 ----------------- GETS
 
--- Get the dependency list meta (TODO rename this, maybe modulesignature?)
+-- Get the timestamp of the last time that the module was read.
 getModuleStampQ :: Query ModuleId (Only (Maybe ModuleStamp))
 getModuleStampQ = "SELECT file_stamp FROM module WHERE rowid = ?"
+
+-- Get the module path and possible foreigns path.
+getModulePathsQ :: Query ModuleId (FilePath, Maybe FilePath)
+getModulePathsQ = "SELECT path, foreigns_path FROM module WHERE rowid = ?"
 
 -- Get the dependency list meta (TODO rename this, maybe modulesignature?)
 getModuleExternsStampQ :: Query ModuleId (Only (Maybe ExternsStamp))

@@ -37,8 +37,7 @@ import           Language.PureScript.Crash
 import           Language.PureScript.Environment
 import           Language.PureScript.Label (Label(..))
 import           Language.PureScript.Names
-import           Language.PureScript.Pretty
-import           Language.PureScript.Pretty.Common (endWith)
+import           Language.PureScript.Pretty hiding (indent)
 import           Language.PureScript.PSString (decodeStringWithReplacement)
 import           Language.PureScript.Traversals
 import           Language.PureScript.Types

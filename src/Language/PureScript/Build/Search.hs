@@ -39,14 +39,14 @@ isValidPursFile path = case (takeBaseName path, takeExtension path) of
   _ -> pure False
 
 -- | Collect all of the source files from a given root directory.
-findModulesIn :: FilePath -> IO [ModuleName]
+findModulesIn :: FilePath -> IO [DiscoveredModule]
 findModulesIn root = do
   traceM $ "Discovering source files in " <> root
   found <- execStateT (go Nothing) []
   traceM $ "Found " <> show (length found) <> " files"
   pure found
   where
-  go :: Maybe ModuleName -> StateT [ModuleName] IO ()
+  go :: Maybe ModuleName -> StateT [DiscoveredModule] IO ()
   go mModName = do
     traceM $ "Go " <> show (renderModuleName <$> mModName)
     -- Figure out what directory to be looking for files in
@@ -62,23 +62,38 @@ findModulesIn root = do
     -- Collect files in this directory
     forM_ pursFiles $ \filename -> do
       -- Strip off the ".purs" extension
-      let baseModName = ProperName $ T.dropEnd 5 $ T.pack filename
+      let baseModName = T.dropEnd 5 $ T.pack filename
       let modName = case mModName of
-            Nothing -> ModuleName [baseModName]
-            Just mn -> addModuleName baseModName mn
+            Nothing -> ModuleName [ProperName baseModName]
+            Just mn -> addModuleName (ProperName baseModName) mn
+      let frnPath = dir </> (T.unpack baseModName) <> ".js"
+      traceM $ "Checking if " <> frnPath <> " exists"
+      frn <- liftBase (D.doesFileExist frnPath) >>= \case
+        True -> do
+          traceM $ "Found foreigns file at " <> frnPath
+          pure $ Just frnPath
+        _ -> pure Nothing
+
       traceM $ "Adding module name " <> renderModuleName modName
-      modify (modName:)
+      let dm = DiscoveredModule modName (dir </> filename) frn
+      modify (dm:)
 
     -- Recur on subdirectories
     forM_ subdirs $ \subdir -> go $ Just $ case mModName of
       Nothing -> ModuleName [ProperName $ T.pack subdir]
       Just modName -> addModuleName (ProperName $ T.pack subdir) modName
 
+data DiscoveredModule = DiscoveredModule {
+  dmInferredName :: ModuleName,
+  dmPath :: FilePath,
+  dmForeign :: Maybe FilePath
+  } deriving (Show)
+
 data ModulesAndRoot = ModulesAndRoot {
   -- Root directory of the discovered modules
   mrRoot :: FilePath,
   -- Names of all the modules discovered in this directory
-  mrModules :: [ModuleName]
+  mrModules :: [DiscoveredModule]
   } deriving (Show)
 
 data DiscoveredPackage

@@ -1,10 +1,13 @@
 -- | The data type of compiler options
+{-# LANGUAGE DeriveGeneric #-}
 module Language.PureScript.Options where
 
 import Prelude.Compat
 import qualified Data.Set as S
 import Data.Map (Map)
+import GHC.Generics (Generic)
 import qualified Data.Map as Map
+import qualified Data.Aeson as A -- (FromJSON(..), Options(..), defaultOptions)
 
 -- | The data type of compiler options
 data Options = Options
@@ -16,14 +19,21 @@ data Options = Options
   -- ^ Codegen targets (JS, CoreFn, etc.)
   , optionsSourceMaps :: Bool
   -- ^ Generate sourcemaps
-  } deriving Show
+  , optionsAddPrefix :: Bool
+  -- ^ Add a "Generated purs" comment to generated code
+  } deriving (Show, Generic)
+
+instance A.FromJSON Options where
+  parseJSON = A.genericParseJSON A.defaultOptions
 
 -- Default make options
 defaultOptions :: Options
-defaultOptions = Options False False (S.singleton JS) False
+defaultOptions = Options False False (S.singleton JS) False True
 
 data CodegenTarget = JS | CoreFn
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, Generic)
+
+instance A.FromJSON CodegenTarget
 
 codegenTargets :: Map String CodegenTarget
 codegenTargets = Map.fromList

@@ -24,7 +24,7 @@ import Language.PureScript.ModuleDependencies as P
 import Language.PureScript.Names as P
 import Language.PureScript.Options as P
 import Language.PureScript.Parser as P
-import Language.PureScript.Pretty as P
+import Language.PureScript.Pretty as P hiding (parens, indent)
 import Language.PureScript.Renamer as P
 import Language.PureScript.Sugar as P
 import Language.PureScript.TypeChecker as P

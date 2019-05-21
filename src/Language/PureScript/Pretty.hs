@@ -7,6 +7,7 @@
 -- * [@Language.PureScript.Pretty.Types@] Pretty printer for types
 module Language.PureScript.Pretty (module P) where
 
+import Language.PureScript.Pretty.Common as P
 import Language.PureScript.Pretty.Kinds as P
 import Language.PureScript.Pretty.Types as P
 import Language.PureScript.Pretty.Values as P

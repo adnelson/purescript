@@ -43,9 +43,9 @@ data CachedBuild = CachedBuild !(Maybe ExternsFile) !(Stamp 'Exts)
 -- | Refers to a module which has been discovered by the package manager.
 -- Can be considered "proof" that the given module exists.
 data ResolvedModuleRef = ResolvedModuleRef {
-  rmrModuleId :: !ModuleId, -- ID in the
-  rmrPackageRef :: !PackageRef,
-  rmrModuleName :: !ModuleName
+  rmrModuleId :: !ModuleId, -- ^ ID in the database
+  rmrPackageRef :: !PackageRef, -- ^ Package the module is in
+  rmrModuleName :: !ModuleName -- ^ The name of the module
   } deriving (Show, Eq, Ord)
 
 instance ToJSON ResolvedModuleRef where
@@ -69,7 +69,7 @@ prettyRMRef (ResolvedModuleRef _ p mn) = prefix <> renderModuleName mn where
 type PrecompiledRecord = (ModuleName, ExternsFile, Hash 'Mod)
 
 data PackageMeta = PackageMeta {
-  pmRoot :: FilePath,
+  pmRoot :: !FilePath,
   pmModules :: Map ModuleName ModuleId
   } deriving (Show, Eq)
 
