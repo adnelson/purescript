@@ -2,7 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DeriveFoldable #-}
-{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 -- |
 -- Data types for names
@@ -207,12 +207,17 @@ addModuleName name (ModuleName names) = ModuleName (names <> [name])
 
 -- | Convert a module name to its expected path relative to source root.
 moduleNameToRelPath :: ModuleName -> FilePath
-moduleNameToRelPath (ModuleName names) =
-  T.unpack $ T.intercalate "/" (map runProperName names) <> ".purs"
+moduleNameToRelPath n = moduleNameToRelPath n <> ".purs"
+
+-- | Convert a module name to its expected path relative to source
+-- root, without extension
+moduleNameToRelPathNoExt :: ModuleName -> FilePath
+moduleNameToRelPathNoExt (ModuleName names) =
+  T.unpack $ T.intercalate "/" (map runProperName names)
 
 -- | TODO: make a smart constructor for this
 newtype PackageName = PackageName { packageNameToText :: Text }
-  deriving (Show, Eq, Ord, Generic, NFData, ToJSON, FromJSON)
+  deriving (Show, IsString, Eq, Ord, Generic, NFData, ToJSON, FromJSON)
 
 instance ToField PackageName where toField (PackageName n) = toField n
 instance FromField PackageName where fromField f = PackageName <$> fromField f

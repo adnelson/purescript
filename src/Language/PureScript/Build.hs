@@ -208,7 +208,7 @@ parseModule path source = do
 parseModuleImports :: Build m => FilePath -> B8.ByteString -> m [ModuleRef]
 parseModuleImports path source = do
   allImports <- getModuleImports <$> parseModule path source
-  pure $ filter (not . isPrim . mrName) allImports
+  pure $ ordNub $ filter (not . isPrim . mrName) allImports
 
 -- | Resolve a module reference. Success means the module has a valid
 -- and unambiguous name, and hence a known path.

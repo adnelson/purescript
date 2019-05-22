@@ -3,6 +3,8 @@ module Language.PureScript.Build.Search where
 import Prelude.Compat
 import Debug.Trace
 
+import Data.Sequence (Seq(..), (<|), (|>))
+import Data.List (intercalate)
 import Control.Monad.Base (liftBase)
 import Control.Monad (forM_, filterM)
 import Control.Monad.Except (MonadError)
@@ -42,30 +44,29 @@ isValidPursFile path = case (takeBaseName path, takeExtension path) of
 findModulesIn :: FilePath -> IO [DiscoveredModule]
 findModulesIn root = do
   traceM $ "Discovering source files in " <> root
-  found <- execStateT (go Nothing) []
+  found <- execStateT (go mempty) []
   traceM $ "Found " <> show (length found) <> " files"
   pure found
   where
-  go :: Maybe ModuleName -> StateT [DiscoveredModule] IO ()
-  go mModName = do
-    traceM $ "Go " <> show (renderModuleName <$> mModName)
+  go :: Seq String -> StateT [DiscoveredModule] IO ()
+  go pathParts = do
+    traceM $ "Go " <> show pathParts
     -- Figure out what directory to be looking for files in
-    let dir = case mModName of
-          Nothing -> root
-          Just modName -> dropExtension $ root </> moduleNameToRelPath modName
+    let dir = foldr (</>) "" (root <| pathParts)
     traceM $ "Dir " <> show dir
     files <- liftBase $ D.listDirectory dir
     pursFiles <- filterM (liftBase . isValidPursFile . (dir </>)) files
     subdirs <- filterM (liftBase . isValidPursSubdir . (dir </>)) files
-    traceM $ show (dir, pursFiles, subdirs)
+    traceM $ show (dir, files, pursFiles, subdirs)
 
     -- Collect files in this directory
     forM_ pursFiles $ \filename -> do
       -- Strip off the ".purs" extension
       let baseModName = T.dropEnd 5 $ T.pack filename
-      let modName = case mModName of
-            Nothing -> ModuleName [ProperName baseModName]
-            Just mn -> addModuleName (ProperName baseModName) mn
+      let names = fmap ProperName (fmap T.pack pathParts |> baseModName)
+      let modName = ModuleName $! foldr (:) [] names
+      traceM $ "PureScript file " <> renderModuleName modName <> " at "
+            <> show (dir </> filename)
       let frnPath = dir </> (T.unpack baseModName) <> ".js"
       traceM $ "Checking if " <> frnPath <> " exists"
       frn <- liftBase (D.doesFileExist frnPath) >>= \case
@@ -79,9 +80,7 @@ findModulesIn root = do
       modify (dm:)
 
     -- Recur on subdirectories
-    forM_ subdirs $ \subdir -> go $ Just $ case mModName of
-      Nothing -> ModuleName [ProperName $ T.pack subdir]
-      Just modName -> addModuleName (ProperName $ T.pack subdir) modName
+    forM_ subdirs $ \subdir -> go (pathParts |> subdir)
 
 data DiscoveredModule = DiscoveredModule {
   dmInferredName :: ModuleName,

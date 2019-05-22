@@ -16,6 +16,7 @@ import Data.Maybe (fromMaybe, mapMaybe)
 import qualified Data.Map as M
 
 import Language.PureScript.AST
+import Language.PureScript.Constants (isPrim)
 import Language.PureScript.Crash
 import Language.PureScript.Errors
 import Language.PureScript.Names
@@ -107,7 +108,7 @@ resolveExports env ss mn imps exps refs =
       }
   elaborateModuleExports result (ModuleReference ss' (ModuleRef _ name)) = do
     let isPseudo = isPseudoModule name
-    when (not isPseudo && not (isImportedModule name))
+    when (not (isPrim name) && not isPseudo && not (isImportedModule name))
       . throwError . errorMessage' ss' . UnknownExport $ ModName name
     reTypes <- extract ss' isPseudo name TyName (importedTypes imps)
     reTypeOps <- extract ss' isPseudo name TyOpName (importedTypeOps imps)
